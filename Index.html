@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Pesca PT</title>
+<style>
+:root{color-scheme:light dark;--bg:#eef1ec;--card:#fff;--ink:#14262e;--mute:#5d7078;--line:#d5ddd9;--accent:#0e6e78;--major:#e0a82e;--minor:#5fa8a0;--tide:#0e6e78;--bad:#b5432f}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1a20;--card:#15262e;--ink:#e6efe9;--mute:#8fa5ac;--line:#243a44;--accent:#5cc3cc;--major:#e8b84a;--minor:#4b948d;--tide:#5cc3cc;--bad:#e07a62}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,"Segoe UI",system-ui,sans-serif;padding:max(14px,env(safe-area-inset-top)) 14px max(24px,env(safe-area-inset-bottom))}
+main{max-width:680px;margin:0 auto}
+h1{font:700 26px Georgia,"Iowan Old Style",serif;margin:6px 0 12px}
+h2{font:600 17px Georgia,serif;margin:0 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0}
+input{width:100%;font:inherit;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+#res{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#res button,.day{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:6px 10px;cursor:pointer}
+.days{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.day{flex:0 0 auto;text-align:center;min-width:64px}
+.day[aria-pressed=true]{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.day small{display:block;opacity:.8}
+.row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}
+.big{font:700 34px Georgia,serif}
+.mute{color:var(--mute);font-size:14px}
+.score{display:flex;align-items:center;gap:14px}
+.ring{font:700 30px Georgia,serif;width:74px;height:74px;border-radius:50%;display:grid;place-items:center;border:5px solid var(--major)}
+svg{width:100%;height:auto;display:block}
+svg text{fill:var(--mute);font-size:10px}
+.err{color:var(--bad)}
+</style>
+</head>
+<body>
+<main>
+<h1>Pesca PT</h1>
+<input id="q" placeholder="Procurar qualquer local (ex.: Porto Martins, Peniche)" autocomplete="off">
+<div id="res"></div>
+<div id="app"><p class="mute">A carregar locais do IPMA…</p></div>
+<p class="mute">Tempo: IPMA (locais da lista oficial) ou Open-Meteo (restantes locais). Marés: estimativa simplificada (não usar para navegação). Solunar: calculado no dispositivo.</p>
+</main>
+<script>
+const API='https://api.ipma.pt/open-data/';
+const R=Math.PI/180,DAY=864e5,OBL=R*23.4397,P2=2*Math.PI,MIN5=3e5;
+let locs=[],types={},winds={},cur=null,fc=[],sel=0,TZ='Europe/Lisbon',SRC='';
+
+/* ---------- astronomia (formulas tipo SunCalc) ---------- */
+const jd=t=>t/DAY-0.5+2440588-2451545;
+const RA=(l,b)=>Math.atan2(Math.sin(l)*Math.cos(OBL)-Math.tan(b)*Math.sin(OBL),Math.cos(l));
+const DEC=(l,b)=>Math.asin(Math.sin(b)*Math.cos(OBL)+Math.cos(b)*Math.sin(OBL)*Math.sin(l));
+function state(t,lat,lon){
+  const d=jd(t),M=R*(357.5291+0.98560028*d);
+  const SL=M+R*(1.9148*Math.sin(M)+0.02*Math.sin(2*M))+R*102.9372+Math.PI;
+  const L=R*(218.316+13.176396*d),Mm=R*(134.963+13.064993*d),F=R*(93.272+13.22935*d);
+  const ml=L+R*6.289*Math.sin(Mm),mb=R*5.128*Math.sin(F);
+  const st=R*(280.16+360.9856235*d)+R*lon,p=R*lat;
+  const alt=(H,dc)=>Math.asin(Math.sin(p)*Math.sin(dc)+Math.cos(p)*Math.cos(dc)*Math.cos(H));
+  const mH=(((st-RA(ml,mb))%P2)+P2)%P2, sH=st-RA(SL,0);
+  return{mH,mAlt:alt(mH,DEC(ml,mb)),sAlt:alt(sH,DEC(SL,0)),el:ml-SL};
+}
+function dayData(day0,lat,lon){
+  const ev={up:[],lo:[],mr:[],ms:[],sr:null,ss:null},tide=[],mh=R*0.125,sh=-R*0.833;
+  let p=null;
+  for(let i=0;i<=288;i++){
+    const t=day0+i*MIN5,s=state(t,lat,lon);
+    if(p){
+      const at=f=>p.t+f*MIN5;
+      if(p.mH>5&&s.mH<1)ev.up.push(at((P2-p.mH)/(s.mH+P2-p.mH)));
+      if(p.mH<Math.PI&&s.mH>=Math.PI)ev.lo.push(at((Math.PI-p.mH)/(s.mH-p.mH)));
+      if(p.mAlt<mh&&s.mAlt>=mh)ev.mr.push(at((mh-p.mAlt)/(s.mAlt-p.mAlt)));
+      if(p.mAlt>=mh&&s.mAlt<mh)ev.ms.push(at((p.mAlt-mh)/(p.mAlt-s.mAlt)));
+      if(p.sAlt<sh&&s.sAlt>=sh)ev.sr=at((sh-p.sAlt)/(s.sAlt-p.sAlt));
+      if(p.sAlt>=sh&&s.sAlt<sh)ev.ss=at((p.sAlt-sh)/(p.sAlt-s.sAlt));
+    }
+    // mare estimada: componente lunar semi-diurna, amplitude modulada pela fase (sizigias/quadraturas)
+    const A=1.2+0.55*Math.cos(2*s.el);
+    tide.push({t,h:2+A*Math.cos(2*(s.mH-0.6))});
+    s.t=t;p=s;
+  }
+  const mid=state(day0+DAY/2,lat,lon);
+  return{ev,tide,el:mid.el};
+}
+function phaseInfo(el){
+  const f=(((el/P2)%1)+1)%1,n=['Lua nova','Crescente','Quarto crescente','Gibosa crescente','Lua cheia','Gibosa minguante','Quarto minguante','Minguante'];
+  return{emoji:'🌑🌒🌓🌔🌕🌖🌗🌘'[Math.round(f*8)%8],name:n[Math.round(f*8)%8],illum:Math.round((1-Math.cos(el))/2*100)};
+}
+function solunar(dd){
+  const {ev,el}=dd,per=[];
+  [...ev.up,...ev.lo].forEach(t=>per.push({a:t-36e5,b:t+36e5,k:'Maior'}));
+  [...ev.mr,...ev.ms].forEach(t=>per.push({a:t-18e5,b:t+18e5,k:'Menor'}));
+  const sunT=[ev.sr,ev.ss].filter(Boolean);
+  let score=45+35*Math.abs(Math.cos(el));
+  per.forEach(x=>{x.sun=sunT.some(s=>s>x.a-36e5&&s<x.b+36e5);if(x.sun)score+=x.k=='Maior'?10:5});
+  per.sort((a,b)=>a.a-b.a);
+  return{per,score:Math.min(100,Math.round(score))};
+}
+function extremes(tide){
+  const o=[];
+  for(let i=1;i<tide.length-1;i++){
+    const a=tide[i-1].h,b=tide[i].h,c=tide[i+1].h;
+    if(b>a&&b>=c)o.push({t:tide[i].t,k:'Preia-mar'});
+    if(b<a&&b<=c)o.push({t:tide[i].t,k:'Baixa-mar'});
+  }
+  return o;
+}
+
+/* ---------- apresentacao ---------- */
+const fmt=t=>new Date(t).toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit',timeZone:TZ});
+const tzFor=(lat,lon)=>lon<-24?'Atlantic/Azores':(lat<34&&lon>-18)?'Atlantic/Madeira':'Europe/Lisbon';
+function tzOff(t,tz){const p=new Intl.DateTimeFormat('en-US',{timeZone:tz,hourCycle:'h23',year:'numeric',month:'numeric',day:'numeric',hour:'numeric',minute:'numeric',second:'numeric'}).formatToParts(new Date(t)).reduce((o,x)=>(o[x.type]=+x.value,o),{});return Date.UTC(p.year,p.month-1,p.day,p.hour,p.minute,p.second)-Math.floor(t/1000)*1000}
+function dayStart(s,tz){const [y,m,d]=s.split('-').map(Number),g=Date.UTC(y,m-1,d);let t=g-tzOff(g,tz);return g-tzOff(t,tz)}
+const dir=d=>['N','NE','E','SE','S','SO','O','NO'][Math.round(d/45)%8];
+function wmo(c){return c==0?['☀️','Céu limpo']:c==1?['🌤️','Pouco nublado']:c==2?['⛅','Parcialmente nublado']:c==3?['☁️','Nublado']:[45,48].includes(c)?['🌫️','Nevoeiro']:c<60?['🌦️','Chuvisco']:c<70?['🌧️','Chuva']:c<80?['❄️','Neve']:c<90?['🌦️','Aguaceiros']:['⛈️','Trovoada']}
+const emoji=id=>id==1?'☀️':[2,3,25].includes(id)?'🌤️':[4,5,24,27].includes(id)?'☁️':[6,7,12,13].includes(id)?'🌦️':id>=8&&id<=15?'🌧️':[16,17,26].includes(id)?'🌫️':[19,20,23].includes(id)?'⛈️':[18,21,22].includes(id)?'❄️':'🌥️';
+const $=id=>document.getElementById(id);
+async function get(u){const r=await fetch(API+u);if(!r.ok)throw new Error(r.status);return r.json()}
+
+function chart(day0,dd,sl,today){
+  const x=t=>20+(t-day0)/DAY*600,hs=dd.tide.map(p=>p.h),mn=Math.min(...hs),mx=Math.max(...hs);
+  const y=h=>150-(h-mn)/((mx-mn)||1)*115;
+  let s='<svg viewBox="0 0 640 180" role="img" aria-label="Maré estimada e períodos solunares">';
+  sl.per.forEach(p=>{s+=`<rect x="${x(p.a)}" y="12" width="${x(p.b)-x(p.a)}" height="138" fill="var(--${p.k=='Maior'?'major':'minor'})" opacity="${p.k=='Maior'?.35:.28}"/>`});
+  s+=`<polyline fill="none" stroke="var(--tide)" stroke-width="2.5" points="${dd.tide.map(p=>x(p.t).toFixed(1)+','+y(p.h).toFixed(1)).join(' ')}"/>`;
+  for(let h=0;h<=24;h+=3)s+=`<text x="${20+h*25}" y="170" text-anchor="middle">${String(h%24).padStart(2,'0')}h</text>`;
+  [[dd.ev.sr,'☀↑'],[dd.ev.ss,'☀↓']].forEach(([t,l])=>{if(t)s+=`<text x="${x(t)}" y="9" text-anchor="middle">${l}</text>`});
+  if(today){const n=Date.now();if(n>day0&&n<day0+DAY)s+=`<line x1="${x(n)}" x2="${x(n)}" y1="12" y2="150" stroke="var(--bad)" stroke-width="1.5" stroke-dasharray="4 3"/>`}
+  return s+'</svg>';
+}
+
+function render(){
+  if(!cur)return;
+  const f=fc[sel],day0=dayStart(f.forecastDate,TZ);
+  const lat=cur.lat,lon=cur.lon,dd=dayData(day0,lat,lon),sl=solunar(dd),ph=phaseInfo(dd.el);
+  const ex=extremes(dd.tide),today=sel==0;
+  const days=fc.map((d,i)=>{const dt=new Date(d.forecastDate+'T12:00:00');
+    return `<button class="day" aria-pressed="${i==sel}" data-i="${i}">${d.icon}<small>${dt.toLocaleDateString('pt-PT',{weekday:'short'})} ${dt.getDate()}</small></button>`}).join('');
+  const label=sl.score>=75?'Muito boa':sl.score>=60?'Boa':sl.score>=45?'Razoável':'Fraca';
+  $('app').innerHTML=`
+  <div class="card"><h2>${cur.name}</h2><div class="mute" style="margin:-6px 0 8px">${cur.sub?cur.sub+' · ':''}fonte: ${SRC}</div><div class="days">${days}</div></div>
+  <div class="card"><div style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="big">${Math.round(f.tMax)}° <span class="mute">/ ${Math.round(f.tMin)}°</span></div><div>${f.desc}</div></div>
+    <div style="font-size:52px">${f.icon}</div></div>
+    <div class="row"><span>Vento</span><span>${f.wind}</span></div>
+    <div class="row"><span>Probabilidade de chuva</span><span>${f.rain==null?'—':Math.round(f.rain)+'%'}</span></div></div>
+  <div class="card"><h2>Pesca (teoria solunar)</h2>
+    <div class="score"><div class="ring">${sl.score}</div><div><strong>${label}</strong><div class="mute">${ph.emoji} ${ph.name} · ${ph.illum}% iluminada</div></div></div>
+    ${sl.per.map(p=>`<div class="row"><span>${p.k=='Maior'?'Período maior':'Período menor'}${p.sun?' ⭐':''}</span><span>${fmt(p.a)} – ${fmt(p.b)}</span></div>`).join('')}
+    <p class="mute">⭐ coincide com o nascer ou o pôr do sol, o que reforça a janela.</p>
+    <div class="row"><span>Nascer / pôr do sol</span><span>${dd.ev.sr?fmt(dd.ev.sr):'—'} / ${dd.ev.ss?fmt(dd.ev.ss):'—'}</span></div></div>
+  <div class="card"><h2>Marés estimadas e janelas</h2>${chart(day0,dd,sl,today)}
+    <p class="mute">Faixa dourada: período maior. Faixa verde: período menor. Linha azul: maré.</p>
+    ${ex.map(e=>`<div class="row"><span>${e.k}</span><span>${fmt(e.t)}</span></div>`).join('')}</div>`;
+  document.querySelectorAll('.day').forEach(b=>b.onclick=()=>{sel=+b.dataset.i;render()});
+}
+
+async function ipmaFc(id){
+  const d=(await get(`forecast/meteorology/cities/daily/${id}.json`)).data;SRC='IPMA';
+  return d.map(f=>({forecastDate:f.forecastDate,tMin:+f.tMin,tMax:+f.tMax,rain:+f.precipitaProb,desc:types[f.idWeatherType]||'—',icon:emoji(f.idWeatherType),wind:`${f.predWindDir} · ${winds[f.classWindSpeed]||'—'}`}));
+}
+async function omFc(l){
+  const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${l.lat}&longitude=${l.lon}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant&timezone=${encodeURIComponent(l.tz)}&forecast_days=10`);
+  if(!r.ok)throw new Error(r.status);
+  const d=(await r.json()).daily;SRC='Open-Meteo';
+  return d.time.map((t,i)=>{const w=wmo(d.weather_code[i]);return{forecastDate:t,tMin:d.temperature_2m_min[i],tMax:d.temperature_2m_max[i],rain:d.precipitation_probability_max[i],desc:w[1],icon:w[0],wind:`${dir(d.wind_direction_10m_dominant[i])} · ${Math.round(d.wind_speed_10m_max[i])} km/h`}});
+}
+async function pick(l){
+  cur=l;sel=0;TZ=l.tz;$('res').innerHTML='';$('q').value=l.name;
+  try{localStorage.setItem('loc2',JSON.stringify(l))}catch(e){}
+  $('app').innerHTML='<p class="mute">A carregar previsão…</p>';
+  let f=null;
+  if(l.ipma){try{f=await ipmaFc(l.ipma)}catch(e){}}
+  if(!f){try{f=await omFc(l)}catch(e){$('app').innerHTML='<p class="err">Não foi possível obter a previsão. Verifica a ligação e tenta de novo.</p>';return}}
+  fc=f;render();
+}
+const norm=s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function show(arr){
+  $('res').innerHTML='';
+  arr.forEach(l=>{const b=document.createElement('button');b.textContent=l.name+(l.sub?' · '+l.sub:'');b.onclick=()=>pick(l);$('res').appendChild(b)});
+}
+async function geo(raw,local){
+  try{
+    const r=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(raw)}&count=10&language=pt&countryCode=PT`);
+    const j=await r.json();
+    if($('q').value.trim()!==raw)return;
+    const g=(j.results||[]).map(x=>({name:x.name,sub:[x.admin2,x.admin1].filter(Boolean).join(', '),lat:x.latitude,lon:x.longitude,tz:x.timezone||tzFor(x.latitude,x.longitude)}));
+    show([...local,...g]);
+    if(!local.length&&!g.length)$('res').innerHTML='<span class="mute">Sem resultados.</span>';
+  }catch(e){}
+}
+let tm;
+$('q').oninput=e=>{
+  clearTimeout(tm);
+  const raw=e.target.value.trim(),v=norm(raw);
+  const local=v?locs.filter(l=>norm(l.name).includes(v)).slice(0,4):[];
+  show(local);
+  if(raw.length>=2)tm=setTimeout(()=>geo(raw,local),350);
+};
+(async()=>{
+  const opt=async u=>{try{return(await get(u)).data}catch(e){return[]}};
+  const [L,T,W]=await Promise.all([opt('distrits-islands.json'),opt('weather-type-classe.json'),opt('wind-speed-daily-classe.json')]);
+  locs=L.map(l=>({name:l.local,sub:'IPMA',lat:+l.latitude,lon:+l.longitude,ipma:l.globalIdLocal,tz:tzFor(+l.latitude,+l.longitude)})).sort((a,b)=>a.name.localeCompare(b.name,'pt'));
+  T.forEach(t=>types[+t.idWeatherType]=t.descWeatherTypePT);
+  W.forEach(w=>winds[w.classWindSpeed]=w.descClassWindSpeedDailyPT);
+  let last=null;try{last=JSON.parse(localStorage.getItem('loc2'))}catch(e){}
+  pick(last||locs.find(l=>l.ipma==1110600)||{name:'Lisboa',sub:'',lat:38.72,lon:-9.14,tz:'Europe/Lisbon'});
+})();
+</script>
+</body>
+</html>
