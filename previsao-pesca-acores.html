@@ -50,6 +50,14 @@ button.rf{cursor:pointer}
 .val{margin:6px 0 0;font-size:.88rem;color:var(--mute)}
 .nota{margin:2px 0 0;font-size:.92rem}
 svg.sp{display:block;margin-top:6px;width:100%;max-width:260px;height:36px}
+.pers{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0 6px}
+.per{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:.85rem}
+.per.top{border:2px solid var(--c);padding:7px 9px}
+.per small{color:var(--mute)}
+.per span{font-weight:800;font-size:1.25rem;color:var(--c)}
+.tira{display:grid;grid-template-columns:repeat(24,1fr);gap:1px;margin-top:10px}
+.tira i{height:20px}
+.eixo{display:flex;justify-content:space-between;font-size:.72rem;color:var(--mute)}
 .estado{color:var(--mute);font-size:.85rem;margin-top:16px}
 .erro{padding:16px;border:1px solid var(--c5);border-radius:10px;background:var(--card)}
 </style>
@@ -63,6 +71,7 @@ svg.sp{display:block;margin-top:6px;width:100%;max-width:260px;height:36px}
   </div>
   <div class="ctrl">
     <select id="ilha" aria-label="Ilha"></select>
+    <select id="local" aria-label="Local de pesca"></select>
     <button class="rf" id="rf" type="button">Atualizar</button>
   </div>
 </header>
@@ -76,7 +85,15 @@ const ILHAS={
  "Santa Maria":[36.96,-25.09],"São Miguel":[37.78,-25.50],"Terceira":[38.72,-27.22],
  "Graciosa":[39.05,-28.00],"São Jorge":[38.65,-28.05],"Pico":[38.47,-28.32],
  "Faial":[38.58,-28.70],"Flores":[39.45,-31.13],"Corvo":[39.70,-31.11]};
-const HORAS=[6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]; // período de pesca diurno
+// Locais por ilha: [nome, lat, lon, face]. face = direção para onde a costa está virada (0=N, 90=E, 180=S, 270=O).
+// Coordenadas e orientações aproximadas: ajuste-as à vontade. Para acrescentar locais a outra ilha, junte uma linha aqui.
+const LOCAIS={"Terceira":[
+ ["Praia da Vitória",38.733,-27.067,90],["Porto Martins",38.755,-27.055,80],["Lages",38.756,-27.090,110],
+ ["Porto Judeu",38.678,-27.128,170],["Angra do Heroísmo",38.655,-27.220,180],["São Bartolomeu",38.667,-27.283,190],
+ ["Cinco Ribeiras",38.700,-27.360,225],["Serreta",38.765,-27.365,315],["Biscoitos",38.790,-27.240,350],["Quatro Ribeiras",38.770,-27.155,20]]};
+const locaisDe=i=>[["Toda a ilha (geral)",...ILHAS[i],null],...(LOCAIS[i]||[])];
+const HORAS=Array.from({length:24},(_,i)=>i); // dia completo (00h-23h): também se pesca à noite
+const JANELA=12; // horas anteriores usadas para medir a tendência da pressão
 
 /* ---------- Utilitários ---------- */
 const $=s=>document.querySelector(s);
@@ -114,13 +131,75 @@ function nomeFase(p){
   if(p<.78)return'Quarto minguante';return'Lua minguante';
 }
 
+/* ---------- Solunar e marés ---------- */
+const PERIODOS=[['Madrugada',0,6],['Manhã',6,12],['Tarde',12,18],['Noite',18,24]];
+const hm=m=>{m=Math.round(Math.max(0,Math.min(1439,m)));return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')};
+// Posição aproximada da Lua (fórmulas simplificadas, erro de alguns minutos). Maior = passagem meridiana ±60 min; menor = nascer/pôr ±30 min.
+function solunar(data,lat,lon){
+  const R=Math.PI/180,meio=new Date(data+'T12:00:00Z');
+  const loc=new Date(meio.toLocaleString('sv-SE',{timeZone:'Atlantic/Azores'}).replace(' ','T')+'Z');
+  const t0=Date.UTC(+data.slice(0,4),+data.slice(5,7)-1,+data.slice(8,10))-(loc-meio);
+  const alt=m=>{
+    const d=(t0+m*6e4)/864e5-10957.5;
+    const lam=(218.316+13.176396*d+6.289*Math.sin((134.963+13.064993*d)*R))*R;
+    const bet=5.128*Math.sin((93.272+13.22935*d)*R)*R,eps=(23.4393-3.563e-7*d)*R;
+    const x=Math.cos(lam)*Math.cos(bet),y=Math.sin(lam)*Math.cos(bet)*Math.cos(eps)-Math.sin(bet)*Math.sin(eps),z=Math.sin(lam)*Math.cos(bet)*Math.sin(eps)+Math.sin(bet)*Math.cos(eps);
+    const H=(280.46061837+360.98564736629*d+lon)*R-Math.atan2(y,x),dec=Math.asin(z);
+    return Math.asin(Math.sin(lat*R)*Math.sin(dec)+Math.cos(lat*R)*Math.cos(dec)*Math.cos(H));
+  };
+  const A=[];for(let m=0;m<=1440;m+=10)A.push(alt(m));
+  const janelas=[];
+  for(let i=1;i<A.length-1;i++){
+    const m=i*10;
+    if((A[i]>A[i-1]&&A[i]>=A[i+1])||(A[i]<A[i-1]&&A[i]<=A[i+1]))janelas.push({ini:m-60,fim:m+60,tipo:'maior'});
+    if((A[i-1]<0&&A[i]>=0)||(A[i-1]>=0&&A[i]<0))janelas.push({ini:m-30,fim:m+30,tipo:'menor'});
+  }
+  return{janelas:janelas.sort((a,b)=>a.ini-b.ini)};
+}
+// Preia-mar e baixa-mar: máximos e mínimos da série de nível do mar (com interpolação parabólica)
+function extremos(d){
+  const c=d.mareCtx,r=[];if(!c)return r;
+  for(let i=0;i<24;i++){
+    const y0=c[i],y1=c[i+1],y2=c[i+2];if(y0==null||y1==null||y2==null)continue;
+    const alta=y1>y0&&y1>=y2,baixa=y1<y0&&y1<=y2;if(!alta&&!baixa)continue;
+    const den=y0-2*y1+y2,m=(i+(den?.5*(y0-y2)/den:0))*60;
+    if(m>=0&&m<1440)r.push({m,alta,y:y1});
+  }
+  return r;
+}
+// Pontuação hora a hora: água em movimento (velocidade da maré) + períodos solunares, com bónus quando coincidem
+function horaMares(d){
+  const c=d.mareCtx;
+  return HORAS.map(h=>{
+    const sp=c&&c[h]!=null&&c[h+2]!=null?Math.abs(c[h+2]-c[h])/2:null;
+    const base=sp==null?60:interp(sp,[[0,35],[.05,50],[.12,80],[.2,100]]);
+    const s=d.sol.janelas.filter(j=>h*60+30>=j.ini&&h*60+30<=j.fim).reduce((a,j)=>Math.max(a,j.tipo==='maior'?1:.6),0);
+    const mid=h*60+30,ds=d.sun?Math.min(Math.abs(mid-d.sun.nasce),Math.abs(mid-d.sun.poe)):999;
+    const u=ds<=45?1:ds<=90?.5:0; // luz de amanhecer e entardecer
+    return clamp(base*.5+(40+60*s)*.3+(40+60*u)*.2+((s>0||u>0)&&base>=70?10:0));
+  });
+}
+// Janelas de ouro: período solunar a menos de 1 h de uma preia-mar ou baixa-mar
+function ouro(d){
+  const r=[];
+  [...d.sol.janelas,...(d.sun?[d.sun.nasce,d.sun.poe].map(m=>({ini:m-60,fim:m+60})):[])].forEach(j=>d.extremos.forEach(e=>{const a=Math.max(j.ini,e.m-60),b=Math.min(j.fim,e.m+60);if(b>a)r.push({a,b})}));
+  return r.sort((x,y)=>x.a-y.a);
+}
+function tira(d){
+  return`<div class="tira">${d.hs.map((v,h)=>`<i title="${String(h).padStart(2,'0')}h: ${Math.round(v)}%" style="background:${tier(v).c}"></i>`).join('')}</div><div class="eixo"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>`;
+}
+
 /* ---------- Módulos (um por fator) ----------
    Cada módulo recebe os dados do dia e devolve {pontos 0-100, valor, nota} ou null se não houver dados.
    Para acrescentar um fator, basta juntar um objeto a esta lista. */
 const MODULOS=[
 {id:'pressao',nome:'Pressão atmosférica',peso:.20,avaliar(d){
-  const a=vals(d.p);if(a.length<4)return null;
-  const delta=a[a.length-1]-a[0],pm=avg(a);
+  const a=vals(d.p),c=d.pCtx;if(a.length<4)return null;
+  // tendência: para cada hora do dia, variação face às JANELA horas anteriores; depois média do dia
+  const ds=[];for(let i=JANELA;i<c.length;i++)if(c[i]!=null&&c[i-JANELA]!=null)ds.push(c[i]-c[i-JANELA]);
+  if(ds.length<4)return null;
+  const delta=avg(ds),pm=avg(a);
+  const seta=delta<-1?'↓':delta>1?'↑':'→';
   let s=interp(delta,[[-12,30],[-6,50],[-3,100],[-1,92],[0,75],[1,62],[3,50],[6,35]]);
   if(pm<1000)s-=15;else if(pm<1008)s-=7;
   const nota=delta<-6?'Queda rápida: frente a chegar. Peixe ativo, mas o mar vai piorar.'
@@ -128,9 +207,9 @@ const MODULOS=[
    :delta<=1?'Pressão estável: pesca regular, peixe menos agitado.'
    :delta<=4?'Subida ligeira: pós-frente, atividade a recuperar.'
    :'Subida rápida: água turva e peixe irregular.';
-  return{pontos:clamp(s),valor:`${f(pm)} hPa, variação de ${delta>0?'+':''}${f(delta,1)} hPa durante o dia`,nota,extra:spark(a)};
+  return{pontos:clamp(s),valor:`${f(pm)} hPa, tendência ${seta} ${delta>0?'+':''}${f(delta,1)} hPa por cada ${JANELA} h`,nota,extra:spark(a)};
 }},
-{id:'ondulacao',nome:'Ondulação',peso:.28,avaliar(d){
+{id:'ondulacao',nome:'Ondulação',peso:.26,avaliar(d){
   const h=avg(d.onda);if(h==null)return null;
   const hm=mx(d.onda),per=avg(d.per);
   const s=interp(hm,[[0,75],[.3,82],[.8,100],[1.5,88],[2,58],[3,22],[4,5],[5,0]]);
@@ -138,9 +217,9 @@ const MODULOS=[
    :hm<1.5?'Ondulação ideal: mexe o fundo sem pôr em risco a margem.'
    :hm<2.2?'Ondulação já forte: escolha locais abrigados.'
    :'Ondulação perigosa na margem: evite os rochedos expostos.';
-  return{pontos:clamp(s),valor:`Máx. ${f(hm,1)} m, período médio ${f(per,0)} s`,nota};
+  return{pontos:clamp(s),valor:`Máx. ${f(hm,1)} m no local${d.ondaLargo?` (ao largo ${f(mx(d.ondaLargo),1)} m)`:''}, período médio ${f(per,0)} s`,nota};
 }},
-{id:'vento',nome:'Vento',peso:.22,avaliar(d){
+{id:'vento',nome:'Vento',peso:.20,avaliar(d){
   const v=avg(d.v);if(v==null)return null;
   const r=mx(d.raj);
   let s=interp(v,[[0,95],[10,100],[20,72],[30,40],[45,10],[60,0]]);
@@ -150,12 +229,20 @@ const MODULOS=[
    :'Vento forte: lançar e sentir a ferrada fica difícil.';
   return{pontos:clamp(s),valor:`Média ${f(v)} km/h, rajadas até ${f(r)} km/h`,nota};
 }},
-{id:'luamare',nome:'Lua e marés',peso:.12,avaliar(d){
-  const p=faseLunar(d.data);
-  const s=40+60*(1+Math.cos(4*Math.PI*p))/2;
-  const vivas=s>75;
-  return{pontos:s,valor:nomeFase(p),
-   nota:vivas?'Águas vivas: mais corrente e mais atividade junto à costa.':'Águas mortas: menos movimento de água, atividade mais calma.'};
+{id:'mares',nome:'Marés, solunar e luz do dia',peso:.16,avaliar(d){
+  const s=avg(d.hs.slice(d.h0,d.h1));if(s==null)return null;
+  const full=d.h1-d.h0===24,tem=d.extremos.length>0;
+  let extra='';
+  if(full){
+    const ex=d.extremos.map(e=>`${e.alta?'preia-mar':'baixa-mar'} ${hm(e.m)} (${e.y>0?'+':''}${f(e.y,1)} m)`).join('; ');
+    const sl=t=>d.sol.janelas.filter(j=>j.tipo===t).map(j=>`${hm(j.ini)}–${hm(j.fim)}`).join(' e ')||'nenhum';
+    const og=d.ouro.map(o=>`${hm(o.a)}–${hm(o.b)}`).join('; ');
+    extra=`<p class="val">Sol: nasce às ${hm(d.sun.nasce)} e põe-se às ${hm(d.sun.poe)}.</p><p class="val">Marés: ${ex||'sem dados'}.</p><p class="val">Solunar maior: ${sl('maior')}. Menor: ${sl('menor')}.</p>
+     <p class="nota">${og?`Janelas de ouro (solunar ou nascer/pôr do sol junto à mudança de maré): <b>${og}</b>.`:'Neste dia não há coincidência com a mudança de maré.'}</p>${tira(d)}
+     <p class="val">Horas das marés estimadas pelo modelo do Open-Meteo, com precisão limitada junto à costa; confirme nas tabelas do Instituto Hidrográfico. Horas da Lua calculadas de forma aproximada.</p>`;
+  }
+  return{pontos:s,valor:`${nomeFase(faseLunar(d.data))}`,
+   nota:tem?'Pesca-se melhor com a água em movimento, sobretudo dentro de um período solunar.':'Sem dados de maré: pontuação baseada só nos períodos solunares.',extra};
 }},
 {id:'ceu',nome:'Céu e chuva',peso:.12,avaliar(d){
   const n=avg(d.nuv),c=sm(d.chuva);if(n==null)return null;
@@ -172,37 +259,63 @@ const MODULOS=[
 ];
 
 /* ---------- Dados ---------- */
-async function obter(ilha){
-  const[lat,lon]=ILHAS[ilha];
-  const base=`latitude=${lat}&longitude=${lon}&timezone=Atlantic%2FAzores&forecast_days=7`;
-  const urlF=`https://api.open-meteo.com/v1/forecast?${base}&wind_speed_unit=kmh&hourly=pressure_msl,wind_speed_10m,wind_gusts_10m,cloud_cover,precipitation`;
-  const urlM=`https://marine-api.open-meteo.com/v1/marine?${base}&hourly=wave_height,wave_period,sea_surface_temperature`;
+async function obter(loc){
+  const[,lat,lon,face]=loc,R=Math.PI/180,fim='&timezone=Atlantic%2FAzores&past_days=1&forecast_days=7';
+  const base=`latitude=${lat}&longitude=${lon}${fim}`;
+  // o modelo do mar só tem dados ao largo: desloca ~6 km para o lado do mar
+  const mar=face==null?base:`latitude=${(lat+.06*Math.cos(face*R)).toFixed(4)}&longitude=${(lon+.06*Math.sin(face*R)/Math.cos(lat*R)).toFixed(4)}${fim}`;
+  const urlF=`https://api.open-meteo.com/v1/forecast?${base}&wind_speed_unit=kmh&hourly=pressure_msl,wind_speed_10m,wind_gusts_10m,cloud_cover,precipitation,wind_direction_10m&daily=sunrise,sunset`;
+  const urlM=`https://marine-api.open-meteo.com/v1/marine?${mar}&hourly=wave_height,wave_direction,wave_period,sea_surface_temperature,sea_level_height_msl`;
   const[rf,rm]=await Promise.allSettled([fetch(urlF).then(r=>{if(!r.ok)throw 0;return r.json()}),fetch(urlM).then(r=>{if(!r.ok)throw 0;return r.json()})]);
   if(rf.status!=='fulfilled')throw new Error('Sem dados meteorológicos');
   const horas={};
   const juntar=(src,mapa)=>{if(!src)return;src.hourly.time.forEach((t,i)=>{
     const dia=t.slice(0,10),h=+t.slice(11,13);horas[dia]??={};horas[dia][h]??={};
     for(const k in mapa)horas[dia][h][mapa[k]]=src.hourly[k][i];});};
-  juntar(rf.value,{pressure_msl:'p',wind_speed_10m:'v',wind_gusts_10m:'raj',cloud_cover:'nuv',precipitation:'chuva'});
-  juntar(rm.status==='fulfilled'?rm.value:null,{wave_height:'onda',wave_period:'per',sea_surface_temperature:'sst'});
-  return{dias:Object.keys(horas).sort().slice(0,7).map(data=>{
+  juntar(rf.value,{pressure_msl:'p',wind_speed_10m:'v',wind_gusts_10m:'raj',cloud_cover:'nuv',precipitation:'chuva',wind_direction_10m:'vd'});
+  juntar(rm.status==='fulfilled'?rm.value:null,{wave_height:'onda',wave_direction:'od',wave_period:'per',sea_surface_temperature:'sst',sea_level_height_msl:'mare'});
+  const sun={},mm=t=>+t.slice(11,13)*60+ +t.slice(14,16);
+  rf.value.daily.time.forEach((t,i)=>{sun[t]={nasce:mm(rf.value.daily.sunrise[i]),poe:mm(rf.value.daily.sunset[i])}});
+  const hoje=new Date().toLocaleDateString('sv-SE',{timeZone:'Atlantic/Azores'});
+  return{dias:Object.keys(horas).sort().filter(x=>x>=hoje).slice(0,7).map(data=>{
     const d={data};
-    ['p','v','raj','nuv','chuva','onda','per','sst'].forEach(k=>d[k]=HORAS.map(h=>horas[data][h]?.[k]));
+    ['p','v','raj','nuv','chuva','onda','per','sst','mare','vd','od'].forEach(k=>d[k]=HORAS.map(h=>horas[data][h]?.[k]));
+    // pressão com contexto: últimas horas do dia anterior + as 24 h do dia
+    const ant=new Date(new Date(data+'T12:00:00Z')-864e5).toISOString().slice(0,10);
+    d.pCtx=[...HORAS.slice(24-JANELA).map(h=>horas[ant]?.[h]?.p),...d.p];
+    const dep=new Date(new Date(data+'T12:00:00Z').getTime()+864e5).toISOString().slice(0,10);
+    d.mareCtx=[horas[ant]?.[23]?.mare,...d.mare,horas[dep]?.[0]?.mare]; // índice h+1 = hora h
+    d.sun=sun[data];d.sol=solunar(data,lat,lon);
+    if(face!=null){ // exposição do local: ondas e vento de frente para a costa pesam mais
+      const ex=a=>a==null?null:Math.max(0,Math.cos((a-face)*R));
+      d.ondaLargo=d.onda.slice();
+      d.onda=d.onda.map((x,i)=>ex(d.od[i])==null||x==null?x:x*(.35+.65*ex(d.od[i])));
+      ['v','raj'].forEach(k=>d[k]=d[k].map((x,i)=>ex(d.vd[i])==null||x==null?x:x*(.6+.4*ex(d.vd[i]))));
+    }
     return pontuar(d);
   }),marinho:rm.status==='fulfilled'};
 }
 
 /* ---------- Pontuação ---------- */
+function calcular(d){
+  const mods=MODULOS.map(m=>({m,r:m.avaliar(d)})),ok=mods.filter(x=>x.r);
+  let t=ok.reduce((s,x)=>s+x.m.peso*x.r.pontos,0)/ok.reduce((s,x)=>s+x.m.peso,0);
+  const av=[],hs=mx(d.onda),rj=mx(d.raj);
+  if((hs!=null&&hs>=3)||(rj!=null&&rj>=65)){t=Math.min(t,20);av.push('Condições perigosas na margem (ondulação ou rajadas extremas). Não recomendado pescar.');}
+  else if((hs!=null&&hs>=2.2)||(rj!=null&&rj>=50)){t=Math.min(t,45);av.push('Risco para quem pesca nas rochas: ondulação ou rajadas fortes. Pesque só em locais abrigados.');}
+  return{mods,ok:ok.length,total:Math.round(t),avisos:av};
+}
+// Sub-período do dia (horas a..b-1) com os mesmos dados
+function fatiar(d,a,b){
+  const o={data:d.data,sol:d.sol,hs:d.hs,extremos:d.extremos,ouro:d.ouro,h0:a,h1:b,p:d.p.slice(a,b),pCtx:d.pCtx.slice(a,b+JANELA)};
+  ['v','raj','nuv','chuva','onda','per','sst'].forEach(k=>o[k]=d[k].slice(a,b));
+  return o;
+}
 function pontuar(d){
-  d.mods=MODULOS.map(m=>({m,r:m.avaliar(d)}));
-  const ok=d.mods.filter(x=>x.r);
-  let total=ok.reduce((s,x)=>s+x.m.peso*x.r.pontos,0)/ok.reduce((s,x)=>s+x.m.peso,0);
-  d.avisos=[];
-  const hs=mx(d.onda),rj=mx(d.raj);
-  if((hs!=null&&hs>=3)||(rj!=null&&rj>=65)){total=Math.min(total,20);d.avisos.push('Condições perigosas na margem (ondulação ou rajadas extremas). Não recomendado pescar.');}
-  else if((hs!=null&&hs>=2.2)||(rj!=null&&rj>=50)){total=Math.min(total,45);d.avisos.push('Risco para quem pesca nas rochas: ondulação ou rajadas fortes. Pesque só em locais abrigados.');}
-  if(ok.length<MODULOS.length)d.avisos.push('Alguns fatores sem dados para este dia; a percentagem usa apenas os restantes.');
-  d.total=Math.round(total);
+  d.h0=0;d.h1=24;d.extremos=extremos(d);d.hs=horaMares(d);d.ouro=ouro(d);
+  Object.assign(d,calcular(d));
+  if(d.ok<MODULOS.length)d.avisos.push('Alguns fatores sem dados para este dia; a percentagem usa apenas os restantes.');
+  d.periodos=PERIODOS.map(([nome,a,b])=>({nome,a,b,total:calcular(fatiar(d,a,b)).total}));
   return d;
 }
 
@@ -221,6 +334,8 @@ function render(){
   const d=dias[sel],t=tier(d.total);
   const ordem=d.mods.filter(x=>x.r).sort((a,b)=>b.r.pontos-a.r.pontos);
   const forte=ordem[0],fraco=ordem[ordem.length-1];
+  const bp=d.periodos.reduce((a,b)=>b.total>a.total?b:a);
+  const pers=`<div class="pers" role="group" aria-label="Qualidade por período do dia">${d.periodos.map(p=>`<div class="per${p===bp?' top':''}" style="--c:${tier(p.total).c}"><b>${p.nome}</b><small>${p.a}h–${p.b}h</small><span>${p.total}%</span><div class="bar"><i style="width:${p.total}%"></i></div></div>`).join('')}</div>`;
   const mods=d.mods.map(({m,r})=>{
     if(!r)return`<div class="mod"><div class="mh"><h3>${m.nome}</h3></div><p class="nota">Sem dados disponíveis para este fator.</p></div>`;
     const c=tier(r.pontos).c;
@@ -228,23 +343,23 @@ function render(){
       <div class="bar"><i style="width:${r.pontos}%"></i></div><p class="val">${r.valor}</p><p class="nota">${r.nota}</p>${r.extra||''}</div>`}).join('');
   $('#app').innerHTML=`<div class="dias" role="group" aria-label="Dias da semana">${lista}</div>
   <section class="painel" style="--c:${t.c}">
-    <div class="topo"><div><h2>${nomeDia(d.data,{weekday:'long',day:'numeric',month:'long'})}</h2><p>Relatório do período 06h–21h</p></div>
+    <div class="topo"><div><h2>${nomeDia(d.data,{weekday:'long',day:'numeric',month:'long'})}</h2><p>Relatório das 24 horas (00h–23h)</p></div>
     <div class="big">${d.total}<small>%</small><span>${t.n}</span></div></div>
     ${d.avisos.map(a=>`<p class="aviso">${a}</p>`).join('')}
     <p class="resumo">${forte&&fraco&&forte!==fraco?`Ponto mais favorável: <b>${forte.m.nome.toLowerCase()}</b> (${Math.round(forte.r.pontos)}%). Ponto mais fraco: <b>${fraco.m.nome.toLowerCase()}</b> (${Math.round(fraco.r.pontos)}%).`:''}</p>
-    ${mods}
+    <p class="resumo">Melhor período do dia: <b>${bp.nome.toLowerCase()}</b> (${bp.total}%).</p>${pers}${mods}
   </section>`;
   document.querySelectorAll('.dia').forEach(b=>b.onclick=()=>{estado.sel=+b.dataset.i;render();$('.dia[aria-pressed=true]').focus()});
 }
 
 async function carregar(){
-  const ilha=$('#ilha').value;
-  try{localStorage.setItem('ilha',ilha)}catch(e){}
+  const loc=locaisDe($('#ilha').value)[+$('#local').value||0];
+  try{localStorage.setItem('ilha',$('#ilha').value);localStorage.setItem('local',$('#local').value)}catch(e){}
   $('#app').innerHTML='<p>A carregar previsão…</p>';$('#estado').textContent='';
   try{
-    const r=await obter(ilha);
+    const r=await obter(loc);
     estado={dias:r.dias,sel:0};render();
-    $('#estado').textContent=`Atualizado às ${new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
+    $('#estado').textContent=`Local: ${loc[0]}. Atualizado às ${new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
   }catch(e){
     $('#app').innerHTML='<div class="erro"><b>Não foi possível obter a previsão.</b><br>Verifique a ligação à internet e carregue em Atualizar. Abra este ficheiro diretamente no navegador (não dentro de uma pré-visualização).</div>';
   }
@@ -252,7 +367,10 @@ async function carregar(){
 const sel=$('#ilha');
 Object.keys(ILHAS).forEach(n=>sel.add(new Option(n,n)));
 try{sel.value=localStorage.getItem('ilha')||'São Miguel'}catch(e){sel.value='São Miguel'}
-sel.onchange=carregar;$('#rf').onclick=carregar;
+function preencherLocais(idx){const l=$('#local');l.innerHTML='';locaisDe(sel.value).forEach(([n],i)=>l.add(new Option(n,i)));l.value=l.querySelector(`option[value="${idx}"]`)?idx:0}
+let guardado=0;try{guardado=localStorage.getItem('local')||0}catch(e){}
+preencherLocais(guardado);
+sel.onchange=()=>{preencherLocais(0);carregar()};$('#local').onchange=carregar;$('#rf').onclick=carregar;
 carregar();
 </script>
 </body>
