@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Previsão de pesca à cana – Açores</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef3f1;--card:#fff;--ink:#0d2b36;--mute:#5b717a;--line:#d5e0dc;--track:#dfe8e4;--sel:#0d2b36;--selink:#f1f5f2;
+--c1:#2e7d62;--c2:#6f9a3a;--c3:#d9a406;--c4:#d9822b;--c5:#b3412f}
+@media (prefers-color-scheme:dark){:root{--bg:#0a1c23;--card:#11303b;--ink:#e6efec;--mute:#93a9b0;--line:#1f4350;--track:#1b3d49;--sel:#e6efec;--selink:#0a1c23;
+--c1:#4fb08c;--c2:#93bd5c;--c3:#f2b705;--c4:#ee9a47;--c5:#e0715e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:20px 16px 48px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:end;justify-content:space-between;margin-bottom:20px}
+h1{margin:0;font-size:1.7rem;font-weight:800;letter-spacing:-.02em}
+header p{margin:2px 0 0;color:var(--mute);font-size:.9rem}
+.ctrl{display:flex;gap:8px}
+select,button.rf{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+button.rf{cursor:pointer}
+:focus-visible{outline:3px solid var(--c3);outline-offset:2px}
+.grid{display:grid;gap:16px}
+@media(min-width:820px){.grid{grid-template-columns:320px 1fr;align-items:start}}
+.dias{display:flex;flex-direction:column;gap:6px}
+.dia{display:grid;grid-template-columns:78px 1fr 52px;gap:10px;align-items:center;text-align:left;width:100%;font:inherit;color:inherit;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:10px;cursor:pointer}
+.dia[aria-pressed=true]{background:var(--sel);color:var(--selink);border-color:var(--sel)}
+.dia b{display:block;text-transform:capitalize;font-weight:600;line-height:1.2}
+.dia small{opacity:.7}
+.dia .pc{font-weight:800;font-size:1.25rem;text-align:right}
+.bar{height:8px;background:var(--track);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--c);border-radius:4px}
+.melhor{display:inline-block;margin-left:4px;font-size:.7rem;font-weight:600;background:var(--c3);color:#0d2b36;border-radius:4px;padding:0 5px}
+.painel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
+.topo{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:8px}
+.topo h2{margin:0;font-size:1.3rem;text-transform:capitalize}
+.topo p{margin:2px 0 0;color:var(--mute)}
+.big{font-size:3.6rem;font-weight:800;line-height:1;letter-spacing:-.03em;color:var(--c)}
+.big small{font-size:1.3rem;font-weight:600}
+.big span{display:block;font-size:.95rem;font-weight:600;letter-spacing:0;text-align:right}
+.aviso{margin:12px 0 0;padding:10px 12px;border-left:4px solid var(--c5);background:var(--track);border-radius:0 8px 8px 0;font-size:.92rem}
+.resumo{margin:12px 0 4px}
+.mod{padding:14px 0;border-bottom:1px solid var(--line)}
+.mod:last-child{border:0}
+.mh{display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:6px}
+.mh h3{margin:0;font-size:1rem}
+.mh h3 small{font-weight:400;color:var(--mute)}
+.mh strong{font-size:1.05rem;color:var(--c)}
+.val{margin:6px 0 0;font-size:.88rem;color:var(--mute)}
+.nota{margin:2px 0 0;font-size:.92rem}
+svg.sp{display:block;margin-top:6px;width:100%;max-width:260px;height:36px}
+.estado{color:var(--mute);font-size:.85rem;margin-top:16px}
+.erro{padding:16px;border:1px solid var(--c5);border-radius:10px;background:var(--card)}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>Pesca à cana nos Açores</h1>
+    <p>Qualidade prevista por dia, calculada a partir de vários fatores meteorológicos e do mar.</p>
+  </div>
+  <div class="ctrl">
+    <select id="ilha" aria-label="Ilha"></select>
+    <button class="rf" id="rf" type="button">Atualizar</button>
+  </div>
+</header>
+<div id="app" class="grid" aria-live="polite"><p>A carregar previsão…</p></div>
+<p class="estado" id="estado"></p>
+</main>
+
+<script>
+/* ---------- Configuração ---------- */
+const ILHAS={
+ "Santa Maria":[36.96,-25.09],"São Miguel":[37.78,-25.50],"Terceira":[38.72,-27.22],
+ "Graciosa":[39.05,-28.00],"São Jorge":[38.65,-28.05],"Pico":[38.47,-28.32],
+ "Faial":[38.58,-28.70],"Flores":[39.45,-31.13],"Corvo":[39.70,-31.11]};
+const HORAS=[6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21]; // período de pesca diurno
+
+/* ---------- Utilitários ---------- */
+const $=s=>document.querySelector(s);
+const vals=a=>a.filter(x=>x!=null);
+const avg=a=>{a=vals(a);return a.length?a.reduce((s,x)=>s+x,0)/a.length:null};
+const mx=a=>{a=vals(a);return a.length?Math.max(...a):null};
+const sm=a=>{a=vals(a);return a.length?a.reduce((s,x)=>s+x,0):null};
+const clamp=x=>Math.max(0,Math.min(100,x));
+const f=(x,n=0)=>x==null?'–':x.toFixed(n).replace('.',',');
+function interp(x,t){
+  if(x<=t[0][0])return t[0][1];
+  for(let i=1;i<t.length;i++){if(x<=t[i][0]){const[a,b]=t[i-1],[c,d]=t[i];return b+(d-b)*(x-a)/(c-a)}}
+  return t[t.length-1][1];
+}
+function tier(s){
+  if(s>=80)return{n:'Excelente',c:'var(--c1)'};
+  if(s>=65)return{n:'Boa',c:'var(--c2)'};
+  if(s>=50)return{n:'Razoável',c:'var(--c3)'};
+  if(s>=35)return{n:'Fraca',c:'var(--c4)'};
+  return{n:'Má',c:'var(--c5)'};
+}
+function spark(a){
+  const v=vals(a);if(v.length<2)return'';
+  const lo=Math.min(...v),hi=Math.max(...v),r=(hi-lo)||1;
+  const pts=v.map((y,i)=>`${(i/(v.length-1)*256+2).toFixed(1)},${(32-(y-lo)/r*28).toFixed(1)}`).join(' ');
+  return `<svg class="sp" viewBox="0 0 260 36" role="img" aria-label="Pressão ao longo do dia"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
+}
+function faseLunar(dia){
+  const ciclo=29.530588853,d=(new Date(dia+'T12:00:00Z')-Date.UTC(2000,0,6,18,14))/864e5;
+  return (((d%ciclo)+ciclo)%ciclo)/ciclo;
+}
+function nomeFase(p){
+  if(p<.03||p>.97)return'Lua nova';if(p<.22)return'Lua crescente';if(p<.28)return'Quarto crescente';
+  if(p<.47)return'Crescente gibosa';if(p<.53)return'Lua cheia';if(p<.72)return'Minguante gibosa';
+  if(p<.78)return'Quarto minguante';return'Lua minguante';
+}
+
+/* ---------- Módulos (um por fator) ----------
+   Cada módulo recebe os dados do dia e devolve {pontos 0-100, valor, nota} ou null se não houver dados.
+   Para acrescentar um fator, basta juntar um objeto a esta lista. */
+const MODULOS=[
+{id:'pressao',nome:'Pressão atmosférica',peso:.20,avaliar(d){
+  const a=vals(d.p);if(a.length<4)return null;
+  const delta=a[a.length-1]-a[0],pm=avg(a);
+  let s=interp(delta,[[-12,30],[-6,50],[-3,100],[-1,92],[0,75],[1,62],[3,50],[6,35]]);
+  if(pm<1000)s-=15;else if(pm<1008)s-=7;
+  const nota=delta<-6?'Queda rápida: frente a chegar. Peixe ativo, mas o mar vai piorar.'
+   :delta<-1?'Queda gradual: cenário clássico de boa atividade antes da frente.'
+   :delta<=1?'Pressão estável: pesca regular, peixe menos agitado.'
+   :delta<=4?'Subida ligeira: pós-frente, atividade a recuperar.'
+   :'Subida rápida: água turva e peixe irregular.';
+  return{pontos:clamp(s),valor:`${f(pm)} hPa, variação de ${delta>0?'+':''}${f(delta,1)} hPa durante o dia`,nota,extra:spark(a)};
+}},
+{id:'ondulacao',nome:'Ondulação',peso:.28,avaliar(d){
+  const h=avg(d.onda);if(h==null)return null;
+  const hm=mx(d.onda),per=avg(d.per);
+  const s=interp(hm,[[0,75],[.3,82],[.8,100],[1.5,88],[2,58],[3,22],[4,5],[5,0]]);
+  const nota=hm<.3?'Mar chão: peixe mais desconfiado, use fio fino.'
+   :hm<1.5?'Ondulação ideal: mexe o fundo sem pôr em risco a margem.'
+   :hm<2.2?'Ondulação já forte: escolha locais abrigados.'
+   :'Ondulação perigosa na margem: evite os rochedos expostos.';
+  return{pontos:clamp(s),valor:`Máx. ${f(hm,1)} m, período médio ${f(per,0)} s`,nota};
+}},
+{id:'vento',nome:'Vento',peso:.22,avaliar(d){
+  const v=avg(d.v);if(v==null)return null;
+  const r=mx(d.raj);
+  let s=interp(v,[[0,95],[10,100],[20,72],[30,40],[45,10],[60,0]]);
+  s-=Math.max(0,((r??v)-v-15)*.8);
+  const nota=v<12?'Vento fraco: lançamentos fáceis e linha controlada.'
+   :v<25?'Vento moderado: aceitável, procure abrigo.'
+   :'Vento forte: lançar e sentir a ferrada fica difícil.';
+  return{pontos:clamp(s),valor:`Média ${f(v)} km/h, rajadas até ${f(r)} km/h`,nota};
+}},
+{id:'luamare',nome:'Lua e marés',peso:.12,avaliar(d){
+  const p=faseLunar(d.data);
+  const s=40+60*(1+Math.cos(4*Math.PI*p))/2;
+  const vivas=s>75;
+  return{pontos:s,valor:nomeFase(p),
+   nota:vivas?'Águas vivas: mais corrente e mais atividade junto à costa.':'Águas mortas: menos movimento de água, atividade mais calma.'};
+}},
+{id:'ceu',nome:'Céu e chuva',peso:.12,avaliar(d){
+  const n=avg(d.nuv),c=sm(d.chuva);if(n==null)return null;
+  const sn=interp(n,[[0,72],[40,95],[80,95],[100,78]]);
+  const sc=interp(c??0,[[0,100],[1,80],[5,45],[12,15],[25,0]]);
+  return{pontos:clamp(.4*sn+.6*sc),valor:`Nuvens ${f(n)}%, chuva ${f(c,1)} mm`,
+   nota:c>5?'Chuva relevante: turva a água e torna a pesca desconfortável.':n>=40&&n<=85?'Céu parcialmente nublado: boa luminosidade para pescar.':'Condições de luz sem grande efeito.'};
+}},
+{id:'agua',nome:'Temperatura da água',peso:.06,avaliar(d){
+  const t=avg(d.sst);if(t==null)return null;
+  const s=interp(t,[[12,30],[15,55],[17,80],[19,100],[23,100],[25,80],[28,55]]);
+  return{pontos:clamp(s),valor:`${f(t,1)} °C`,nota:t<17?'Água fria: peixe mais lento e junto ao fundo.':t>24?'Água muito quente: peixe procura zonas mais fundas.':'Temperatura favorável.'};
+}}
+];
+
+/* ---------- Dados ---------- */
+async function obter(ilha){
+  const[lat,lon]=ILHAS[ilha];
+  const base=`latitude=${lat}&longitude=${lon}&timezone=Atlantic%2FAzores&forecast_days=7`;
+  const urlF=`https://api.open-meteo.com/v1/forecast?${base}&wind_speed_unit=kmh&hourly=pressure_msl,wind_speed_10m,wind_gusts_10m,cloud_cover,precipitation`;
+  const urlM=`https://marine-api.open-meteo.com/v1/marine?${base}&hourly=wave_height,wave_period,sea_surface_temperature`;
+  const[rf,rm]=await Promise.allSettled([fetch(urlF).then(r=>{if(!r.ok)throw 0;return r.json()}),fetch(urlM).then(r=>{if(!r.ok)throw 0;return r.json()})]);
+  if(rf.status!=='fulfilled')throw new Error('Sem dados meteorológicos');
+  const horas={};
+  const juntar=(src,mapa)=>{if(!src)return;src.hourly.time.forEach((t,i)=>{
+    const dia=t.slice(0,10),h=+t.slice(11,13);horas[dia]??={};horas[dia][h]??={};
+    for(const k in mapa)horas[dia][h][mapa[k]]=src.hourly[k][i];});};
+  juntar(rf.value,{pressure_msl:'p',wind_speed_10m:'v',wind_gusts_10m:'raj',cloud_cover:'nuv',precipitation:'chuva'});
+  juntar(rm.status==='fulfilled'?rm.value:null,{wave_height:'onda',wave_period:'per',sea_surface_temperature:'sst'});
+  return{dias:Object.keys(horas).sort().slice(0,7).map(data=>{
+    const d={data};
+    ['p','v','raj','nuv','chuva','onda','per','sst'].forEach(k=>d[k]=HORAS.map(h=>horas[data][h]?.[k]));
+    return pontuar(d);
+  }),marinho:rm.status==='fulfilled'};
+}
+
+/* ---------- Pontuação ---------- */
+function pontuar(d){
+  d.mods=MODULOS.map(m=>({m,r:m.avaliar(d)}));
+  const ok=d.mods.filter(x=>x.r);
+  let total=ok.reduce((s,x)=>s+x.m.peso*x.r.pontos,0)/ok.reduce((s,x)=>s+x.m.peso,0);
+  d.avisos=[];
+  const hs=mx(d.onda),rj=mx(d.raj);
+  if((hs!=null&&hs>=3)||(rj!=null&&rj>=65)){total=Math.min(total,20);d.avisos.push('Condições perigosas na margem (ondulação ou rajadas extremas). Não recomendado pescar.');}
+  else if((hs!=null&&hs>=2.2)||(rj!=null&&rj>=50)){total=Math.min(total,45);d.avisos.push('Risco para quem pesca nas rochas: ondulação ou rajadas fortes. Pesque só em locais abrigados.');}
+  if(ok.length<MODULOS.length)d.avisos.push('Alguns fatores sem dados para este dia; a percentagem usa apenas os restantes.');
+  d.total=Math.round(total);
+  return d;
+}
+
+/* ---------- Interface ---------- */
+let estado={dias:[],sel:0};
+const nomeDia=(data,o)=>new Date(data+'T12:00:00').toLocaleDateString('pt-PT',o);
+
+function render(){
+  const{dias,sel}=estado;
+  const seguros=dias.filter(d=>!d.avisos.some(a=>a.startsWith('Condições perigosas')));
+  const melhor=seguros.length?seguros.reduce((a,b)=>b.total>a.total?b:a):null;
+  const lista=dias.map((d,i)=>{const t=tier(d.total);
+    return`<button class="dia" type="button" data-i="${i}" aria-pressed="${i===sel}" style="--c:${t.c}">
+      <span><b>${i===0?'Hoje':nomeDia(d.data,{weekday:'short'})}${d===melhor?'<span class="melhor">Melhor</span>':''}</b><small>${nomeDia(d.data,{day:'numeric',month:'short'})}</small></span>
+      <span class="bar"><i style="width:${d.total}%"></i></span><span class="pc">${d.total}%</span></button>`}).join('');
+  const d=dias[sel],t=tier(d.total);
+  const ordem=d.mods.filter(x=>x.r).sort((a,b)=>b.r.pontos-a.r.pontos);
+  const forte=ordem[0],fraco=ordem[ordem.length-1];
+  const mods=d.mods.map(({m,r})=>{
+    if(!r)return`<div class="mod"><div class="mh"><h3>${m.nome}</h3></div><p class="nota">Sem dados disponíveis para este fator.</p></div>`;
+    const c=tier(r.pontos).c;
+    return`<div class="mod" style="--c:${c}"><div class="mh"><h3>${m.nome} <small>peso ${Math.round(m.peso*100)}%</small></h3><strong>${Math.round(r.pontos)}%</strong></div>
+      <div class="bar"><i style="width:${r.pontos}%"></i></div><p class="val">${r.valor}</p><p class="nota">${r.nota}</p>${r.extra||''}</div>`}).join('');
+  $('#app').innerHTML=`<div class="dias" role="group" aria-label="Dias da semana">${lista}</div>
+  <section class="painel" style="--c:${t.c}">
+    <div class="topo"><div><h2>${nomeDia(d.data,{weekday:'long',day:'numeric',month:'long'})}</h2><p>Relatório do período 06h–21h</p></div>
+    <div class="big">${d.total}<small>%</small><span>${t.n}</span></div></div>
+    ${d.avisos.map(a=>`<p class="aviso">${a}</p>`).join('')}
+    <p class="resumo">${forte&&fraco&&forte!==fraco?`Ponto mais favorável: <b>${forte.m.nome.toLowerCase()}</b> (${Math.round(forte.r.pontos)}%). Ponto mais fraco: <b>${fraco.m.nome.toLowerCase()}</b> (${Math.round(fraco.r.pontos)}%).`:''}</p>
+    ${mods}
+  </section>`;
+  document.querySelectorAll('.dia').forEach(b=>b.onclick=()=>{estado.sel=+b.dataset.i;render();$('.dia[aria-pressed=true]').focus()});
+}
+
+async function carregar(){
+  const ilha=$('#ilha').value;
+  try{localStorage.setItem('ilha',ilha)}catch(e){}
+  $('#app').innerHTML='<p>A carregar previsão…</p>';$('#estado').textContent='';
+  try{
+    const r=await obter(ilha);
+    estado={dias:r.dias,sel:0};render();
+    $('#estado').textContent=`Atualizado às ${new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
+  }catch(e){
+    $('#app').innerHTML='<div class="erro"><b>Não foi possível obter a previsão.</b><br>Verifique a ligação à internet e carregue em Atualizar. Abra este ficheiro diretamente no navegador (não dentro de uma pré-visualização).</div>';
+  }
+}
+const sel=$('#ilha');
+Object.keys(ILHAS).forEach(n=>sel.add(new Option(n,n)));
+try{sel.value=localStorage.getItem('ilha')||'São Miguel'}catch(e){sel.value='São Miguel'}
+sel.onchange=carregar;$('#rf').onclick=carregar;
+carregar();
+</script>
+</body>
+</html>
