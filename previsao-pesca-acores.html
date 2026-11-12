@@ -273,7 +273,7 @@ const MODULOS=[
    :hm<1.5?'Ondulação ideal: mexe o fundo sem pôr em risco a margem.'
    :hm<2.2?'Ondulação já forte: escolha locais abrigados.'
    :'Ondulação perigosa na margem: evite os rochedos expostos.';
-  return{pontos:clamp(s),valor:`Máx. ${f(hm,1)} m no local${d.ondaLargo?` (ao largo ${f(mx(d.ondaLargo),1)} m)`:''}, período médio ${f(per,0)} s`,nota};
+  return{pontos:clamp(s),valor:`${dirMedia(d.od,d.ondaLargo||d.onda)!=null?`Ondas de ${lado(dirMedia(d.od,d.ondaLargo||d.onda))}. `:''}Máx. ${f(hm,1)} m no local${d.ondaLargo?` (ao largo ${f(mx(d.ondaLargo),1)} m)`:''}, período médio ${f(per,0)} s`,nota};
 }},
 {id:'vento',nome:'Vento',peso:.20,avaliar(d){
   const v=avg(d.v);if(v==null)return null;
@@ -348,7 +348,7 @@ function grafico(o){
 const G={a:'var(--g1)',b:'var(--g2)',c:'var(--g3)'};
 const DET={
  pressao:d=>grafico({titulo:'Pressão ao nível do mar (hPa), com as 12 h anteriores',s:[{v:d.pCtx,h0:-12,c:G.a,area:1}],x0:-12,dec:0,un:'hPa',bandas:[{a:-12,b:0,c:'var(--ink)',o:.07}],leg:[{c:'var(--ink)',n:'Sombreado: dia anterior (base da tendência)'}]}),
- ondulacao:d=>grafico({titulo:'Altura das ondas (m)',s:[{v:d.onda,c:G.a,area:1},...(d.ondaLargo?[{v:d.ondaLargo,c:G.b,dash:1,semPontos:1}]:[])],min:0,un:'m',refs:[{y:2.2,n:'risco nas rochas'},{y:3,n:'perigoso'}],leg:[{c:G.a,n:'No local'},...(d.ondaLargo?[{c:G.b,n:'Ao largo'}]:[])]}),
+ ondulacao:d=>grafico({titulo:'Altura das ondas (m)',s:[{v:d.onda,c:G.a,area:1},...(d.ondaLargo?[{v:d.ondaLargo,c:G.b,dash:1,semPontos:1}]:[])],min:0,un:'m',refs:[{y:2.2,n:'risco nas rochas'},{y:3,n:'perigoso'}],leg:[{c:G.a,n:'No local'},...(d.ondaLargo?[{c:G.b,n:'Ao largo'}]:[])]})+setasOnda(d),
  vento:d=>grafico({titulo:'Vento (km/h)',s:[{v:d.v,c:G.a,area:1},{v:d.raj,c:G.b,dash:1,semPontos:1}],min:0,dec:0,un:'km/h',refs:[{y:30,n:'vento forte'},{y:50,n:'rajadas perigosas'}],leg:[{c:G.a,n:'Vento médio'},{c:G.b,n:'Rajadas'}]})+setasVento(d),
  ceu:d=>grafico({titulo:'Nebulosidade (%)',s:[{v:d.nuv,c:G.a,area:1}],min:0,max:100,dec:0,un:'%',H:150})+grafico({titulo:'Precipitação (mm por hora)',s:[{v:d.chuva,c:G.a,t:'barra'}],min:0,un:'mm',H:150}),
  agua:d=>grafico({titulo:'Temperatura da água do mar (°C)',s:[{v:d.sst,c:G.b,area:1}],un:'°C'}),
@@ -446,16 +446,18 @@ function dirMedia(vd,w){
 }
 const seta=a=>`<span style="display:inline-block;transform:rotate(${Math.round(a-90)}deg)">→</span>`; // a = azimute para onde aponta
 const ventoTxt=d=>{const w=d.vRaw||d.v,dv=dirMedia(d.vd,w);return dv==null?'':`${seta((dv+180)%360)} ${curto(dv)} ${f(avg(w))} km/h`};
-function setasVento(d){ // direção do vento de 3 em 3 horas
-  const w=d.vRaw||d.v;if(!d.vd||dirMedia(d.vd,w)==null)return'';
+function faixaSetas(titulo,dirs,w,un,dec,leg){ // direção de 3 em 3 horas; dirs = graus de onde vem, w = intensidade
+  if(!dirs||!w||dirMedia(dirs,w)==null)return'';
   let g='';
   for(let h=0;h<24;h+=3){
-    const a=dirMedia(d.vd.slice(h,h+3),w.slice(h,h+3));if(a==null)continue;
+    const a=dirMedia(dirs.slice(h,h+3),w.slice(h,h+3));if(a==null)continue;
     const x=46+(h+1.5)/24*(640-46-14);
-    g+=`<g transform="translate(${x.toFixed(1)},26) rotate(${Math.round((a+180)%360)})"><path d="M0,-16 L7,-4 L2,-4 L2,14 L-2,14 L-2,-4 L-7,-4 Z" fill="var(--g1)"/></g><text x="${x.toFixed(1)}" y="56" text-anchor="middle" style="font-size:11px">${curto(a)}</text><text x="${x.toFixed(1)}" y="70" text-anchor="middle" style="font-size:10px;fill:var(--mute)">${f(avg(w.slice(h,h+3)))} km/h</text>`;
+    g+=`<g transform="translate(${x.toFixed(1)},26) rotate(${Math.round((a+180)%360)})"><path d="M0,-16 L7,-4 L2,-4 L2,14 L-2,14 L-2,-4 L-7,-4 Z" fill="var(--g1)"/></g><text x="${x.toFixed(1)}" y="56" text-anchor="middle" style="font-size:11px">${curto(a)}</text><text x="${x.toFixed(1)}" y="70" text-anchor="middle" style="font-size:10px;fill:var(--mute)">${f(avg(w.slice(h,h+3)),dec)} ${un}</text>`;
   }
-  return`<figure class="fig"><figcaption>Direção do vento a cada 3 horas</figcaption><svg class="graf" viewBox="0 0 640 78" role="img" aria-label="Direção do vento">${g}</svg><div class="leg"><span>A seta aponta para onde sopra o vento; a letra indica de onde vem.</span></div></figure>`;
+  return`<figure class="fig"><figcaption>${titulo}</figcaption><svg class="graf" viewBox="0 0 640 78" role="img" aria-label="${titulo}">${g}</svg><div class="leg"><span>${leg}</span></div></figure>`;
 }
+const setasVento=d=>faixaSetas('Direção do vento a cada 3 horas',d.vd,d.vRaw||d.v,'km/h',0,'A seta aponta para onde sopra o vento; a letra indica de onde vem.');
+const setasOnda=d=>faixaSetas('Direção da ondulação a cada 3 horas (ao largo)',d.od,d.ondaLargo||d.onda,'m',1,'A seta aponta para onde viajam as ondas; a letra indica de onde vêm. Altura das ondas ao largo.');
 // Uma freguesia com costas viradas para lados diferentes (ex.: Rosais, em São Jorge) dá um local por lado: «Rosais (Norte)», «Rosais (Sul)».
 function costasDaIlha(feats){
   const cont=new Map(),R=Math.PI/180,k5=p=>p[0].toFixed(5)+','+p[1].toFixed(5);
