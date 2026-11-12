@@ -70,6 +70,15 @@ svg.sp{display:block;margin-top:6px;width:100%;max-width:260px;height:36px}
 .graf{display:block;width:100%;height:auto}
 .leg{display:flex;flex-wrap:wrap;gap:4px 14px;margin:4px 0;font-size:.8rem;color:var(--mute)}
 .leg i{display:inline-block;width:12px;height:12px;margin-right:5px;border-radius:3px;vertical-align:-2px}
+.mapa{margin:0 0 16px}
+.mapa summary{cursor:pointer;font-weight:600;margin-bottom:8px}
+.mapa svg{display:block;width:100%;height:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.mapa .ilha{fill:var(--track);stroke:var(--mute);stroke-width:.6;stroke-linejoin:round}
+.mapa .pt{cursor:pointer}
+.mapa text{font-size:9px;fill:var(--ink);paint-order:stroke;stroke:var(--card);stroke-width:2.5px}
+.m{display:block}
+.m small{display:block;margin-bottom:3px;font-size:.78rem}
+.m .bar{display:block}
 .estado{color:var(--mute);font-size:.85rem;margin-top:16px}
 .erro{padding:16px;border:1px solid var(--c5);border-radius:10px;background:var(--card)}
 </style>
@@ -87,6 +96,7 @@ svg.sp{display:block;margin-top:6px;width:100%;max-width:260px;height:36px}
     <button class="rf" id="rf" type="button">Atualizar</button>
   </div>
 </header>
+<details class="mapa" id="mapa" open></details>
 <div id="app" class="grid" aria-live="polite"><p>A carregar previsão…</p></div>
 <p class="estado" id="estado"></p>
 <div class="calib">
@@ -267,13 +277,13 @@ const MODULOS=[
 }},
 {id:'vento',nome:'Vento',peso:.20,avaliar(d){
   const v=avg(d.v);if(v==null)return null;
-  const r=mx(d.raj);
+  const r=mx(d.raj),vr=avg(d.vRaw||d.v),dv=dirMedia(d.vd,d.vRaw||d.v);
   let s=interp(v,[[0,95],[10,100],[20,72],[30,40],[45,10],[60,0]]);
   s-=Math.max(0,((r??v)-v-15)*.8);
   const nota=v<12?'Vento fraco: lançamentos fáceis e linha controlada.'
    :v<25?'Vento moderado: aceitável, procure abrigo.'
    :'Vento forte: lançar e sentir a ferrada fica difícil.';
-  return{pontos:clamp(s),valor:`Média ${f(v)} km/h, rajadas até ${f(r)} km/h`,nota};
+  return{pontos:clamp(s),valor:`${dv!=null?`Vento de ${lado(dv)}, `:''}média ${f(vr)} km/h${Math.abs(vr-v)>.5?` (no local, com abrigo: ${f(v)} km/h)`:''}, rajadas até ${f(r)} km/h`,nota};
 }},
 {id:'mares',nome:'Marés, solunar e luz do dia',peso:.16,avaliar(d){
   const s=avg(d.hs.slice(d.h0,d.h1));if(s==null)return null;
@@ -339,7 +349,7 @@ const G={a:'var(--g1)',b:'var(--g2)',c:'var(--g3)'};
 const DET={
  pressao:d=>grafico({titulo:'Pressão ao nível do mar (hPa), com as 12 h anteriores',s:[{v:d.pCtx,h0:-12,c:G.a,area:1}],x0:-12,dec:0,un:'hPa',bandas:[{a:-12,b:0,c:'var(--ink)',o:.07}],leg:[{c:'var(--ink)',n:'Sombreado: dia anterior (base da tendência)'}]}),
  ondulacao:d=>grafico({titulo:'Altura das ondas (m)',s:[{v:d.onda,c:G.a,area:1},...(d.ondaLargo?[{v:d.ondaLargo,c:G.b,dash:1,semPontos:1}]:[])],min:0,un:'m',refs:[{y:2.2,n:'risco nas rochas'},{y:3,n:'perigoso'}],leg:[{c:G.a,n:'No local'},...(d.ondaLargo?[{c:G.b,n:'Ao largo'}]:[])]}),
- vento:d=>grafico({titulo:'Vento (km/h)',s:[{v:d.v,c:G.a,area:1},{v:d.raj,c:G.b,dash:1,semPontos:1}],min:0,dec:0,un:'km/h',refs:[{y:30,n:'vento forte'},{y:50,n:'rajadas perigosas'}],leg:[{c:G.a,n:'Vento médio'},{c:G.b,n:'Rajadas'}]}),
+ vento:d=>grafico({titulo:'Vento (km/h)',s:[{v:d.v,c:G.a,area:1},{v:d.raj,c:G.b,dash:1,semPontos:1}],min:0,dec:0,un:'km/h',refs:[{y:30,n:'vento forte'},{y:50,n:'rajadas perigosas'}],leg:[{c:G.a,n:'Vento médio'},{c:G.b,n:'Rajadas'}]})+setasVento(d),
  ceu:d=>grafico({titulo:'Nebulosidade (%)',s:[{v:d.nuv,c:G.a,area:1}],min:0,max:100,dec:0,un:'%',H:150})+grafico({titulo:'Precipitação (mm por hora)',s:[{v:d.chuva,c:G.a,t:'barra'}],min:0,un:'mm',H:150}),
  agua:d=>grafico({titulo:'Temperatura da água do mar (°C)',s:[{v:d.sst,c:G.b,area:1}],un:'°C'}),
  mares:d=>{
@@ -383,6 +393,7 @@ async function obter(loc){
     const dep=new Date(new Date(data+'T12:00:00Z').getTime()+864e5).toISOString().slice(0,10);
     d.mareCtx=[horas[ant]?.[22]?.mare,horas[ant]?.[23]?.mare,...d.mare,horas[dep]?.[0]?.mare,horas[dep]?.[1]?.mare]; // índice h+2 = hora h
     if(modelo){const t0=t0Dia(data);d.mare=HORAS.map(h=>nivelMare(t0+h*36e5,fator,modelo));d.mareCtx=Array.from({length:28},(_,i)=>nivelMare(t0+(i-2)*36e5,fator,modelo));d.modeloMare=modelo}
+    d.vRaw=d.v.slice(); // vento antes do ajuste de abrigo do local
     d.sun=sun[data];d.desf=desf;d.sol=solunar(data,lat,lon);
     if(face!=null){ // exposição do local: ondas e vento de frente para a costa pesam mais
       const ex=a=>a==null?null:Math.max(0,Math.cos((a-face)*R));
@@ -406,7 +417,7 @@ function calcular(d){
 // Sub-período do dia (horas a..b-1) com os mesmos dados
 function fatiar(d,a,b){
   const o={data:d.data,sol:d.sol,hs:d.hs,extremos:d.extremos,ouro:d.ouro,h0:a,h1:b,p:d.p.slice(a,b),pCtx:d.pCtx.slice(a,b+JANELA)};
-  ['v','raj','nuv','chuva','onda','per','sst'].forEach(k=>o[k]=d[k].slice(a,b));
+  ['v','raj','nuv','chuva','onda','per','sst','vRaw','vd','od'].forEach(k=>o[k]=d[k].slice(a,b));
   return o;
 }
 function pontuar(d){
@@ -426,6 +437,25 @@ const MUNIC={"Santa Maria":["Vila do Porto"],"São Miguel":["Lagoa","Nordeste","
 const FREG={};
 const ROSA=['Norte','Nordeste','Leste','Sudeste','Sul','Sudoeste','Oeste','Noroeste'];
 const lado=a=>ROSA[Math.round(a/45)%8];
+const curto=a=>['N','NE','E','SE','S','SO','O','NO'][Math.round(a/45)%8];
+// Direção média (de onde vem o vento/as ondas), ponderada pela intensidade: vd = graus de onde sopra, w = intensidade
+function dirMedia(vd,w){
+  if(!vd||!w)return null;let sx=0,sy=0;
+  vd.forEach((a,i)=>{const k=w[i];if(a==null||k==null)return;sx+=k*Math.sin(a*Math.PI/180);sy+=k*Math.cos(a*Math.PI/180)});
+  return sx||sy?(Math.atan2(sx,sy)*180/Math.PI+360)%360:null;
+}
+const seta=a=>`<span style="display:inline-block;transform:rotate(${Math.round(a-90)}deg)">→</span>`; // a = azimute para onde aponta
+const ventoTxt=d=>{const w=d.vRaw||d.v,dv=dirMedia(d.vd,w);return dv==null?'':`${seta((dv+180)%360)} ${curto(dv)} ${f(avg(w))} km/h`};
+function setasVento(d){ // direção do vento de 3 em 3 horas
+  const w=d.vRaw||d.v;if(!d.vd||dirMedia(d.vd,w)==null)return'';
+  let g='';
+  for(let h=0;h<24;h+=3){
+    const a=dirMedia(d.vd.slice(h,h+3),w.slice(h,h+3));if(a==null)continue;
+    const x=46+(h+1.5)/24*(640-46-14);
+    g+=`<g transform="translate(${x.toFixed(1)},26) rotate(${Math.round((a+180)%360)})"><path d="M0,-16 L7,-4 L2,-4 L2,14 L-2,14 L-2,-4 L-7,-4 Z" fill="var(--g1)"/></g><text x="${x.toFixed(1)}" y="56" text-anchor="middle" style="font-size:11px">${curto(a)}</text><text x="${x.toFixed(1)}" y="70" text-anchor="middle" style="font-size:10px;fill:var(--mute)">${f(avg(w.slice(h,h+3)))} km/h</text>`;
+  }
+  return`<figure class="fig"><figcaption>Direção do vento a cada 3 horas</figcaption><svg class="graf" viewBox="0 0 640 78" role="img" aria-label="Direção do vento">${g}</svg><div class="leg"><span>A seta aponta para onde sopra o vento; a letra indica de onde vem.</span></div></figure>`;
+}
 // Uma freguesia com costas viradas para lados diferentes (ex.: Rosais, em São Jorge) dá um local por lado: «Rosais (Norte)», «Rosais (Sul)».
 function costasDaIlha(feats){
   const cont=new Map(),R=Math.PI/180,k5=p=>p[0].toFixed(5)+','+p[1].toFixed(5);
@@ -450,7 +480,8 @@ function costasDaIlha(feats){
         for(let i=1;i<P.length;i++)L.push(L[i-1]+Math.hypot(P[i][0]-P[i-1][0],P[i][1]-P[i-1][1]));
         if(L[L.length-1]<1000)return; // ilhéus e rochas
         const nor=P.map((_,i)=>{ // normal para o mar, com a tangente medida numa janela de ±300 m
-          let a=i,b=i;while(a>0&&L[i]-L[a-1]<=300)a--;while(b<P.length-1&&L[b+1]-L[i]<=300)b++;
+          let a=Math.max(0,i-1),b=Math.min(P.length-1,i+1); // pelo menos os vizinhos imediatos, mesmo com vértices muito espaçados
+          while(a>0&&L[i]-L[a-1]<=300)a--;while(b<P.length-1&&L[b+1]-L[i]<=300)b++;
           const dx=P[b][0]-P[a][0],dy=P[b][1]-P[a][1],h=Math.hypot(dx,dy)||1;return[sg*dy/h,-sg*dx/h];
         });
         let cur={i0:0,sx:0,sy:0};const ss=[];
@@ -484,9 +515,23 @@ function costasDaIlha(feats){
   });
   return lista.sort((a,b)=>a[0].localeCompare(b[0],'pt'));
 }
+const GEOM={};
+function simplifica(P,tol){ // Douglas-Peucker (iterativo)
+  const n=P.length,keep=new Uint8Array(n);let st=[[0,n-1]];keep[0]=keep[n-1]=1;
+  if(P[0][0]===P[n-1][0]&&P[0][1]===P[n-1][1]){ // anel fechado: divide no ponto mais afastado do início
+    let ix=0,m=-1;for(let i=1;i<n-1;i++){const d=Math.hypot(P[i][0]-P[0][0],P[i][1]-P[0][1]);if(d>m){m=d;ix=i}}
+    keep[ix]=1;st=[[0,ix],[ix,n-1]];
+  }
+  while(st.length){
+    const[a,b]=st.pop(),dx=P[b][0]-P[a][0],dy=P[b][1]-P[a][1],l=Math.hypot(dx,dy)||1e-12;let m=0,ix=-1;
+    for(let i=a+1;i<b;i++){const d=Math.abs((P[i][0]-P[a][0])*dy-(P[i][1]-P[a][1])*dx)/l;if(d>m){m=d;ix=i}}
+    if(m>tol){keep[ix]=1;st.push([a,ix],[ix,b])}
+  }
+  return P.filter((_,i)=>keep[i]);
+}
 async function carregarFreguesias(ilha){
   if(FREG[ilha])return;
-  try{const c=JSON.parse(localStorage.getItem('freg3|'+ilha)||'null');if(c?.length){FREG[ilha]=c;return}}catch(e){}
+  try{const c=JSON.parse(localStorage.getItem('freg4|'+ilha)||'null');if(c?.length){FREG[ilha]=c;GEOM[ilha]=JSON.parse(localStorage.getItem('geom4|'+ilha)||'[]');return}}catch(e){}
   try{
     const feats=[];
     for(const m of MUNIC[ilha]){
@@ -497,10 +542,49 @@ async function carregarFreguesias(ilha){
       feats.push(...(j.geojsons?.freguesias||[]).filter(f=>avg(aneisX(f.geometry))<-24));
     }
     const lista=costasDaIlha(feats);
-    if(lista.length){FREG[ilha]=lista;try{localStorage.setItem('freg3|'+ilha,JSON.stringify(lista))}catch(e){}}
+    if(lista.length){
+      FREG[ilha]=lista;
+      GEOM[ilha]=feats.map(f=>[f.properties.Freguesia,(f.geometry.type==='MultiPolygon'?f.geometry.coordinates:[f.geometry.coordinates]).map(q=>simplifica(q[0],.0007).map(p=>[+p[0].toFixed(4),+p[1].toFixed(4)])).filter(a=>a.length>3)]);
+      try{localStorage.setItem('freg4|'+ilha,JSON.stringify(lista))}catch(e){}
+      try{localStorage.setItem('geom4|'+ilha,JSON.stringify(GEOM[ilha]))}catch(e){}
+    }
   }catch(e){console.warn('GEO API PT indisponível; a usar a lista incluída no programa.',e)}
 }
 const aneisX=g=>(g.type==='MultiPolygon'?g.coordinates:[g.coordinates]).flatMap(q=>q[0].map(p=>p[0]));
+
+/* ---------- Mapa da ilha: freguesias, orientação da costa e abrigo ao vento e às ondas ---------- */
+function desenharMapa(){
+  const el=$('#mapa'),ilha=sel.value,R=Math.PI/180;
+  const spots=locaisDe(ilha).map((l,i)=>({i,n:l[0],lat:l[1],lon:l[2],face:l[3]})).filter(x=>x.face!=null);
+  const geo=GEOM[ilha]||[],pts=geo.length?geo.flatMap(g=>g[1].flat()):spots.map(x=>[x.lon,x.lat]);
+  if(!pts.length){el.innerHTML='';return}
+  const lo0=Math.min(...pts.map(p=>p[0])),lo1=Math.max(...pts.map(p=>p[0])),la0=Math.min(...pts.map(p=>p[1])),la1=Math.max(...pts.map(p=>p[1]));
+  const k=Math.cos((la0+la1)/2*R),dx=(lo1-lo0)*k,dy=la1-la0,pad=.08*Math.max(dx,dy,.01),sw=dx+2*pad,sh=dy+2*pad;
+  const e=Math.min(620/sw,380/sh),W=Math.round(sw*e)+20,H=Math.round(sh*e)+20;
+  const X=lon=>(10+((lon-lo0)*k+pad)*e).toFixed(1),Y=lat=>(10+((la1-lat)+pad)*e).toFixed(1);
+  // vento e ondulação previstos para o dia escolhido: de onde vêm e com que intensidade
+  const dia=estado.dias?.[estado.sel],w=dia&&(dia.vRaw||dia.v),ow=dia&&(dia.ondaLargo||dia.onda);
+  const dv=dia?dirMedia(dia.vd,w):null,vv=dia?avg(w):null,dO=dia?dirMedia(dia.od,ow):null,hO=dia?avg(ow):null;
+  const expo=x=>{if(dv==null)return null;
+    const ev=Math.max(0,Math.cos((dv-x.face)*R))*Math.min(1,vv/35),eo=dO==null?0:Math.max(0,Math.cos((dO-x.face)*R))*Math.min(1,(hO||0)/2);
+    return Math.max(ev,eo)};
+  const cor=v=>v==null?'var(--mute)':v<.25?'var(--c1)':v<.55?'var(--c3)':'var(--c5)';
+  const atual=+$('#local').value;
+  let g=geo.map(([,aneis])=>`<path class="ilha" d="${aneis.map(a=>a.map((p,i)=>(i?'L':'M')+X(p[0])+','+Y(p[1])).join('')+'Z').join('')}"/>`).join('');
+  spots.forEach(x=>{
+    const ex=expo(x),c=cor(ex),sx=X(x.lon),sy=Y(x.lat),on=x.i===atual;
+    g+=`<g class="pt" data-i="${x.i}" transform="translate(${sx},${sy})"><title>${x.n}: costa virada a ${lado(x.face)}${ex!=null?`, exposição ${Math.round(ex*100)}%`:''}</title>
+      <g transform="rotate(${x.face})"><path d="M0,0 L0,-19 M0,-19 L-4,-12 M0,-19 L4,-12" stroke="${c}" stroke-width="2" fill="none"/></g>
+      ${on?'<circle r="10" fill="none" stroke="var(--ink)" stroke-width="2"/>':''}<circle r="6" fill="${c}" stroke="var(--card)" stroke-width="1.5"/>
+      ${spots.length<=20||on?`<text x="9" y="3">${x.n}</text>`:''}</g>`;
+  });
+  g+=`<text x="${W-28}" y="16" style="font-size:11px">N ↑</text>`;
+  const leg=`<div class="leg"><span><i style="background:var(--c1)"></i>abrigado</span><span><i style="background:var(--c3)"></i>parcialmente exposto</span><span><i style="background:var(--c5)"></i>exposto</span>
+    ${dv!=null?`<span>Vento: ${seta((dv+180)%360)} de ${lado(dv)}, ${f(vv)} km/h</span>`:''}${dO!=null?`<span>Ondulação: de ${lado(dO)}, ${f(hO,1)} m</span>`:''}</div>
+    <div class="leg"><span>A seta de cada local aponta para o mar. A cor mostra a exposição ao vento e às ondas previstos para o dia escolhido. Clique num local para o selecionar.</span></div>`;
+  el.innerHTML=`<summary>Mapa dos locais de pesca${estado.dias?.length?' (cor = abrigo no dia escolhido)':''}</summary><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Mapa da ilha com os locais de pesca">${g}</svg>${leg}`;
+  el.onclick=ev=>{const t=ev.target.closest('[data-i]');if(!t)return;$('#local').value=t.dataset.i;carregar()};
+}
 
 /* ---------- Interface ---------- */
 let estado={dias:[],sel:0};
@@ -514,7 +598,7 @@ function render(){
   const lista=dias.map((d,i)=>{const t=tier(d.total);
     return`<button class="dia" type="button" data-i="${i}" aria-pressed="${i===sel}" style="--c:${t.c}">
       <span><b>${i===0?'Hoje':nomeDia(d.data,{weekday:'short'})}${d===melhor?'<span class="melhor">Melhor</span>':''}</b><small>${nomeDia(d.data,{day:'numeric',month:'short'})}</small></span>
-      <span class="bar"><i style="width:${d.total}%"></i></span><span class="pc">${d.total}%</span></button>`}).join('');
+      <span class="m"><small>${ventoTxt(d)}</small><span class="bar"><i style="width:${d.total}%"></i></span></span><span class="pc">${d.total}%</span></button>`}).join('');
   const d=dias[sel],t=tier(d.total);
   const ordem=d.mods.filter(x=>x.r).sort((a,b)=>b.r.pontos-a.r.pontos);
   const forte=ordem[0],fraco=ordem[ordem.length-1];
@@ -535,6 +619,7 @@ function render(){
   </section>`;
   document.querySelectorAll('details.mod').forEach(x=>x.ontoggle=()=>x.open?abertos.add(x.dataset.id):abertos.delete(x.dataset.id));
   document.querySelectorAll('.dia').forEach(b=>b.onclick=()=>{estado.sel=+b.dataset.i;render();$('.dia[aria-pressed=true]').focus()});
+  desenharMapa();
 }
 
 async function carregar(){
@@ -565,7 +650,7 @@ function calibrar(){ // compara a hora oficial com a preia-mar do modelo mais pr
 function preencherLocais(nome){const l=$('#local');l.innerHTML='';locaisDe(sel.value).forEach(([n],i)=>l.add(new Option(n,i)));const o=[...l.options].find(x=>x.text===nome);l.value=o?o.value:0}
 async function refrescarLocais(nome){ // depois de obter as freguesias, atualiza a lista e mantém o local escolhido
   const ilha=sel.value;await carregarFreguesias(ilha);if(sel.value!==ilha)return;
-  const antes=$('#local').selectedOptions[0]?.text;preencherLocais(nome||antes);
+  const antes=$('#local').selectedOptions[0]?.text;preencherLocais(nome||antes);desenharMapa();
   if($('#local').selectedOptions[0]?.text!==antes)carregar();
 }
 let guardado='';try{guardado=localStorage.getItem('local')||''}catch(e){}
