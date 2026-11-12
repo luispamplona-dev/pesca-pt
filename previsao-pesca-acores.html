@@ -109,10 +109,13 @@ const LOCAIS={"Terceira":[
  ["Praia da Vitória",38.733,-27.067,90],["Porto Martins",38.755,-27.055,80],["Lages",38.756,-27.090,110],
  ["Porto Judeu",38.678,-27.128,170],["Angra do Heroísmo",38.655,-27.220,180],["São Bartolomeu",38.667,-27.283,190],
  ["Cinco Ribeiras",38.700,-27.360,225],["Serreta",38.765,-27.365,315],["Biscoitos",38.790,-27.240,350],["Quatro Ribeiras",38.770,-27.155,20]]};
-// Terceira: marés pela análise harmónica do IH (porto de Angra do Heroísmo). Concordância do IH para outros locais: [diferença de hora em min, fator de altura].
-const MODELO_ILHA={"Terceira":1};
-const CONC={"Praia da Vitória":[11,1.10]};
-const locaisDe=i=>[["Toda a ilha (geral)",...ILHAS[i],null,0,1,MODELO_ILHA[i]],...(LOCAIS[i]||[]).map(l=>[...l.slice(0,4),CONC[l[0]]?.[0]??0,CONC[l[0]]?.[1]??1,MODELO_ILHA[i]])];
+// Porto de referência de cada ilha e concordância do IH face a esse porto: [porto, diferença de hora em min, fator de altura].
+// Santa Maria e São Miguel têm porto próprio; Graciosa segue Angra; São Jorge, Pico e Faial seguem a Horta; Corvo segue as Lajes das Flores.
+const MARE_ILHA={"Santa Maria":["Vila do Porto",0,1],"São Miguel":["Ponta Delgada",0,1],"Terceira":["Angra do Heroísmo",0,1],
+ "Graciosa":["Angra do Heroísmo",11,1.08],"São Jorge":["Horta",6,1.07],"Pico":["Horta",1,1.05],"Faial":["Horta",0,1],
+ "Flores":["Lajes das Flores",-4,.98],"Corvo":["Lajes das Flores",-1,1]};
+const CONC={"Praia da Vitória":[11,1.10]}; // locais com concordância própria no IH
+const locaisDe=i=>{const[po,df,ft]=MARE_ILHA[i];return[["Toda a ilha (geral)",...ILHAS[i],null,df,ft,po],...(FREG[i]||LOCAIS[i]||[]).map(l=>[...l.slice(0,4),CONC[l[4]??l[0]]?.[0]??df,CONC[l[4]??l[0]]?.[1]??ft,po])]};
 const HORAS=Array.from({length:24},(_,i)=>i); // dia completo (00h-23h): também se pesca à noite
 const JANELA=12; // horas anteriores usadas para medir a tendência da pressão
 
@@ -152,15 +155,20 @@ function nomeFase(p){
   if(p<.78)return'Quarto minguante';return'Lua minguante';
 }
 
-/* ---------- Marés: análise harmónica (Angra do Heroísmo) ----------
-   Constantes ajustadas às previsões da Tabela de Marés 2026 do Instituto Hidrográfico (hora TU, alturas ao zero hidrográfico).
-   nível = z0 + fator·Σ(a·cos(ωt) + b·sin(ωt)), com t em horas desde 2026-01-01 00:00 UTC e ω em graus/hora. */
-const MARE={z0:1.0,c:[[28.9841042,0.435,-0.0073],[30.0,0.012,0.1601],[28.4397295,0.0862,-0.0141],[30.0821373,-0.0302,-0.0455],[27.8953548,0.014,-0.0016],[27.9682084,-0.0049,-0.0243],[28.5125831,0.0013,-0.0156],[29.5284789,-0.0088,-0.003],[29.9589333,0.0024,0.008],[15.0410686,0.022,0.0373],[13.9430356,0.0029,-0.0241],[14.9589314,0.0026,0.0123],[13.3986609,-0.0069,-0.0051],[57.9682084,0.0024,-0.0023],[58.9841042,-0.0008,0.0001],[57.4238337,-0.0001,-0.0],[86.9523127,-0.0043,0.0005],[87.9682084,-0.0001,-0.0011]]};
+/* ---------- Marés: análise harmónica dos portos principais dos Açores ----------
+   Constantes ajustadas às previsões da Tabela de Marés 2026 do Instituto Hidrográfico (hora TU, alturas ao zero hidrográfico, nível médio 1,00 m).
+   nível = 1 + fator·Σ(a·cos(ωt) + b·sin(ωt)), com t em horas desde 2026-01-01 00:00 UTC e ω em graus/hora. Cada linha: [ω, a, b]. */
+const MARES={
+ "Vila do Porto":[[28.9841042,0.4952,-0.0327],[30.0,0.0226,0.1769],[28.4397295,0.0966,-0.0201],[30.0821373,-0.0369,-0.0477],[27.8953548,0.0121,-0.003],[27.9682084,-0.0059,-0.0261],[28.5125831,0.0005,-0.0183],[29.5284789,-0.007,-0.0028],[29.9589333,0.0022,0.0096],[15.0410686,0.0211,0.0326],[13.9430356,-0.0006,-0.0279],[14.9589314,0.0037,0.0099],[13.3986609,-0.0053,-0.0042],[57.9682084,0.0015,0.0001],[58.9841042,-0.0003,0.0003],[57.4238337,0.0006,-0.0011],[86.9523127,-0.008,0.0025],[87.9682084,-0.001,-0.0035]],
+ "Ponta Delgada":[[28.9841042,0.4792,-0.0176],[30.0,0.0169,0.1715],[28.4397295,0.0946,-0.0162],[30.0821373,-0.0355,-0.0507],[27.8953548,0.0118,-0.001],[27.9682084,-0.0072,-0.0241],[28.5125831,0.0013,-0.0194],[29.5284789,-0.0098,-0.0017],[29.9589333,0.0016,0.0101],[15.0410686,0.0257,0.0357],[13.9430356,-0.001,-0.028],[14.9589314,0.003,0.0104],[13.3986609,-0.0057,-0.0049],[57.9682084,0.003,-0.0014],[58.9841042,0.0002,0.0007],[57.4238337,0.0011,-0.0014],[86.9523127,-0.0064,0.0022],[87.9682084,-0.0007,-0.002]],
+ "Angra do Heroísmo":[[28.9841042,0.435,-0.0073],[30.0,0.012,0.1601],[28.4397295,0.0862,-0.0141],[30.0821373,-0.0302,-0.0455],[27.8953548,0.014,-0.0016],[27.9682084,-0.0049,-0.0243],[28.5125831,0.0013,-0.0156],[29.5284789,-0.0088,-0.003],[29.9589333,0.0024,0.008],[15.0410686,0.022,0.0373],[13.9430356,0.0029,-0.0241],[14.9589314,0.0026,0.0123],[13.3986609,-0.0069,-0.0051],[57.9682084,0.0024,-0.0023],[58.9841042,-0.0008,0.0001],[57.4238337,-0.0001,-0.0],[86.9523127,-0.0043,0.0005],[87.9682084,-0.0001,-0.0011]],
+ "Horta":[[28.9841042,0.4141,-0.0506],[30.0,0.0312,0.1446],[28.4397295,0.0753,-0.0215],[30.0821373,-0.0328,-0.0385],[27.8953548,0.0097,-0.0025],[27.9682084,-0.0082,-0.0233],[28.5125831,-0.0004,-0.0143],[29.5284789,-0.0066,-0.0013],[29.9589333,0.0033,0.0073],[15.0410686,0.014,0.0403],[13.9430356,0.0011,-0.0202],[14.9589314,0.0004,0.0113],[13.3986609,-0.0085,-0.0043],[57.9682084,0.0041,-0.0023],[58.9841042,0.0004,0.0014],[57.4238337,0.0013,-0.0021],[86.9523127,-0.0084,0.0039],[87.9682084,-0.0014,-0.003]],
+ "Lajes das Flores":[[28.9841042,0.3597,-0.0341],[30.0,0.0245,0.1285],[28.4397295,0.0722,-0.0182],[30.0821373,-0.0296,-0.0354],[27.8953548,0.0086,-0.0054],[27.9682084,-0.0055,-0.0181],[28.5125831,0.0007,-0.0147],[29.5284789,-0.0065,-0.0022],[29.9589333,0.0009,0.0054],[15.0410686,0.0067,0.0327],[13.9430356,0.0016,-0.0158],[14.9589314,-0.002,0.0084],[13.3986609,-0.0042,-0.0041],[57.9682084,0.0035,0.0002],[58.9841042,-0.0013,0.0012],[57.4238337,-0.0,0.0001],[86.9523127,-0.0037,0.0009],[87.9682084,-0.0004,-0.0013]]};
 const MARE_T0=Date.UTC(2026,0,1);
-function nivelMare(ms,fator=1){
+function nivelMare(ms,fator,porto){
   const t=(ms-MARE_T0)/36e5;let h=0;
-  for(const[w,a,b]of MARE.c){const x=w*Math.PI/180*t;h+=a*Math.cos(x)+b*Math.sin(x)}
-  return MARE.z0+fator*h;
+  for(const[w,a,b]of MARES[porto]){const x=w*Math.PI/180*t;h+=a*Math.cos(x)+b*Math.sin(x)}
+  return 1+fator*h;
 }
 function t0Dia(data){ // meia-noite local dos Açores, em ms UTC
   const m=new Date(data+'T12:00:00Z'),loc=new Date(m.toLocaleString('sv-SE',{timeZone:'Atlantic/Azores'}).replace(' ','T')+'Z');
@@ -277,7 +285,7 @@ const MODULOS=[
     const og=d.ouro.map(o=>`${hm(o.a)}–${hm(o.b)}`).join('; ');
     extra=`<p class="val">Sol: nasce às ${hm(d.sun.nasce)} e põe-se às ${hm(d.sun.poe)}.</p><p class="val">Marés: ${ex||'sem dados'}.</p><p class="val">Solunar maior: ${sl('maior')}. Menor: ${sl('menor')}.</p>
      <p class="nota">${og?`Janelas de ouro (solunar ou nascer/pôr do sol junto à mudança de maré): <b>${og}</b>.`:'Neste dia não há coincidência com a mudança de maré.'}</p>
-     <p class="val">${d.modeloMare?`Marés calculadas com a análise harmónica do Instituto Hidrográfico (Tabela de Marés 2026, Angra do Heroísmo${d.desf?`, com ${d.desf>0?'+':''}${d.desf} min de concordância ou calibração`:''}), em hora dos Açores; alturas ao zero hidrográfico.`:`Horas das marés estimadas pelo modelo do Open-Meteo e corrigidas com um ajuste de ${d.desf>0?'+':''}${d.desf||0} min; use «Calibrar» para o afinar com a tabela oficial.`} Horas da Lua calculadas de forma aproximada.</p>`;
+     <p class="val">${d.modeloMare?`Marés calculadas com a análise harmónica do Instituto Hidrográfico (Tabela de Marés 2026, porto de ${d.modeloMare}${d.desf?`, com ${d.desf>0?'+':''}${d.desf} min de concordância ou calibração`:''}), em hora dos Açores; alturas ao zero hidrográfico.`:`Horas das marés estimadas pelo modelo do Open-Meteo e corrigidas com um ajuste de ${d.desf>0?'+':''}${d.desf||0} min; use «Calibrar» para o afinar com a tabela oficial.`} Horas da Lua calculadas de forma aproximada.</p>`;
   }
   return{pontos:s,valor:`${nomeFase(faseLunar(d.data))}`,
    nota:tem?'Pesca-se melhor com a água em movimento, sobretudo dentro de um período solunar.':'Sem dados de maré: pontuação baseada só nos períodos solunares.',extra};
@@ -374,7 +382,7 @@ async function obter(loc){
     d.pCtx=[...HORAS.slice(24-JANELA).map(h=>horas[ant]?.[h]?.p),...d.p];
     const dep=new Date(new Date(data+'T12:00:00Z').getTime()+864e5).toISOString().slice(0,10);
     d.mareCtx=[horas[ant]?.[22]?.mare,horas[ant]?.[23]?.mare,...d.mare,horas[dep]?.[0]?.mare,horas[dep]?.[1]?.mare]; // índice h+2 = hora h
-    if(modelo){const t0=t0Dia(data);d.mare=HORAS.map(h=>nivelMare(t0+h*36e5,fator));d.mareCtx=Array.from({length:28},(_,i)=>nivelMare(t0+(i-2)*36e5,fator));d.modeloMare=1}
+    if(modelo){const t0=t0Dia(data);d.mare=HORAS.map(h=>nivelMare(t0+h*36e5,fator,modelo));d.mareCtx=Array.from({length:28},(_,i)=>nivelMare(t0+(i-2)*36e5,fator,modelo));d.modeloMare=modelo}
     d.sun=sun[data];d.desf=desf;d.sol=solunar(data,lat,lon);
     if(face!=null){ // exposição do local: ondas e vento de frente para a costa pesam mais
       const ex=a=>a==null?null:Math.max(0,Math.cos((a-face)*R));
@@ -408,6 +416,91 @@ function pontuar(d){
   d.periodos=PERIODOS.map(([nome,a,b])=>({nome,a,b,total:calcular(fatiar(d,a,b)).total}));
   return d;
 }
+
+/* ---------- Freguesias (GEO API PT, Carta Administrativa Oficial) ----------
+   Para cada ilha pede-se a lista de freguesias de cada concelho (com o desenho dos limites). O litoral de cada freguesia são os vértices
+   que não pertencem a nenhuma freguesia vizinha; a orientação da costa (para onde está virado o mar) vem do eixo principal desses vértices. */
+const MUNIC={"Santa Maria":["Vila do Porto"],"São Miguel":["Lagoa","Nordeste","Ponta Delgada","Povoação","Ribeira Grande","Vila Franca do Campo"],
+ "Terceira":["Angra do Heroísmo","Praia da Vitória"],"Graciosa":["Santa Cruz da Graciosa"],"São Jorge":["Calheta","Velas"],
+ "Pico":["Lajes do Pico","Madalena","São Roque do Pico"],"Faial":["Horta"],"Flores":["Lajes das Flores","Santa Cruz das Flores"],"Corvo":["Corvo"]};
+const FREG={};
+const ROSA=['Norte','Nordeste','Leste','Sudeste','Sul','Sudoeste','Oeste','Noroeste'];
+const lado=a=>ROSA[Math.round(a/45)%8];
+// Uma freguesia com costas viradas para lados diferentes (ex.: Rosais, em São Jorge) dá um local por lado: «Rosais (Norte)», «Rosais (Sul)».
+function costasDaIlha(feats){
+  const cont=new Map(),R=Math.PI/180,k5=p=>p[0].toFixed(5)+','+p[1].toFixed(5);
+  const aneis=g=>(g.type==='MultiPolygon'?g.coordinates:[g.coordinates]).map(q=>q[0]);
+  feats.forEach(f=>aneis(f.geometry).forEach(a=>new Set(a.map(k5)).forEach(k=>cont.set(k,(cont.get(k)||0)+1))));
+  const conta={};feats.forEach(f=>conta[f.properties.Freguesia]=(conta[f.properties.Freguesia]||0)+1);
+  const lista=[];
+  feats.forEach(f=>{
+    const segs=[];
+    aneis(f.geometry).forEach(anel=>{
+      const pts=anel.slice(0,-1),n=pts.length;if(n<4)return;
+      const o=pts[0],xy=pts.map(p=>[(p[0]-o[0])*Math.cos(o[1]*R)*111320,(p[1]-o[1])*110574]);
+      let area=0;for(let i=0;i<n;i++){const a=xy[i],b=xy[(i+1)%n];area+=a[0]*b[1]-b[0]*a[1]}
+      const sg=area>0?1:-1; // sentido do anel: define de que lado fica o mar
+      const uni=pts.map(p=>cont.get(k5(p))===1),ini=uni.indexOf(false);
+      const ordem=[...Array(n).keys()].map(i=>ini<0?i:(i+ini+1)%n);
+      const runs=[];let run=[];
+      ordem.forEach(i=>{if(uni[i])run.push(i);else{if(run.length)runs.push(run);run=[]}});
+      if(run.length)runs.push(run);
+      runs.forEach(r=>{ // r = troço contínuo de litoral
+        const P=r.map(i=>xy[i]),L=[0];
+        for(let i=1;i<P.length;i++)L.push(L[i-1]+Math.hypot(P[i][0]-P[i-1][0],P[i][1]-P[i-1][1]));
+        if(L[L.length-1]<1000)return; // ilhéus e rochas
+        const nor=P.map((_,i)=>{ // normal para o mar, com a tangente medida numa janela de ±300 m
+          let a=i,b=i;while(a>0&&L[i]-L[a-1]<=300)a--;while(b<P.length-1&&L[b+1]-L[i]<=300)b++;
+          const dx=P[b][0]-P[a][0],dy=P[b][1]-P[a][1],h=Math.hypot(dx,dy)||1;return[sg*dy/h,-sg*dx/h];
+        });
+        let cur={i0:0,sx:0,sy:0};const ss=[];
+        nor.forEach((u,i)=>{ // novo troço sempre que a direção se afasta mais de 70° da média do troço
+          const mm=Math.hypot(cur.sx,cur.sy);
+          if(i>0&&mm>0&&(u[0]*cur.sx+u[1]*cur.sy)/mm<Math.cos(70*R)){cur.i1=i-1;ss.push(cur);cur={i0:i,sx:0,sy:0}}
+          cur.sx+=u[0];cur.sy+=u[1];
+        });
+        cur.i1=P.length-1;ss.push(cur);
+        ss.forEach(g=>{
+          const mid=r.find((_,k)=>L[k]>=(L[g.i0]+L[g.i1])/2)??r[g.i0],m=Math.hypot(g.sx,g.sy)||1;
+          segs.push({len:L[g.i1]-L[g.i0],ux:g.sx/m,uy:g.sy/m,p:pts[mid]});
+        });
+      });
+    });
+    const tot=segs.reduce((t,x)=>t+x.len,0);if(!segs.length)return;
+    segs.sort((a,b)=>b.len-a.len);
+    const fortes=segs.filter(x=>x.len>=Math.max(500,.15*tot)),grupos=[]; // descarta pontas curtas
+    (fortes.length?fortes:[segs[0]]).forEach(x=>{ // junta troços virados para o mesmo lado
+      const g=grupos.find(g=>(x.ux*g.gx+x.uy*g.gy)/(Math.hypot(g.gx,g.gy)||1)>Math.cos(60*R));
+      if(g){g.gx+=x.ux*x.len;g.gy+=x.uy*x.len}else grupos.push({gx:x.ux*x.len,gy:x.uy*x.len,p:x.p});
+    });
+    const base=conta[f.properties.Freguesia]>1?`${f.properties.Freguesia} (${f.properties.Concelho})`:f.properties.Freguesia;
+    const usados={};
+    grupos.forEach(g=>{
+      const face=Math.round((Math.atan2(g.gx,g.gy)/R+360)%360),l=lado(face);
+      usados[l]=(usados[l]||0)+1;
+      const nome=grupos.length>1?`${base} (${l}${usados[l]>1?' '+usados[l]:''})`:base;
+      lista.push([nome,+g.p[1].toFixed(4),+g.p[0].toFixed(4),face,f.properties.Concelho]);
+    });
+  });
+  return lista.sort((a,b)=>a[0].localeCompare(b[0],'pt'));
+}
+async function carregarFreguesias(ilha){
+  if(FREG[ilha])return;
+  try{const c=JSON.parse(localStorage.getItem('freg3|'+ilha)||'null');if(c?.length){FREG[ilha]=c;return}}catch(e){}
+  try{
+    const feats=[];
+    for(const m of MUNIC[ilha]){
+      const r=await fetch(`https://json.geoapi.pt/municipio/${encodeURIComponent(m)}/freguesias`);
+      if(!r.ok)throw new Error('GEO API PT '+r.status);
+      const j=await r.json();
+      // só os Açores (longitude a oeste de 24° O): há concelhos com o mesmo nome na Madeira
+      feats.push(...(j.geojsons?.freguesias||[]).filter(f=>avg(aneisX(f.geometry))<-24));
+    }
+    const lista=costasDaIlha(feats);
+    if(lista.length){FREG[ilha]=lista;try{localStorage.setItem('freg3|'+ilha,JSON.stringify(lista))}catch(e){}}
+  }catch(e){console.warn('GEO API PT indisponível; a usar a lista incluída no programa.',e)}
+}
+const aneisX=g=>(g.type==='MultiPolygon'?g.coordinates:[g.coordinates]).flatMap(q=>q[0].map(p=>p[0]));
 
 /* ---------- Interface ---------- */
 let estado={dias:[],sel:0};
@@ -448,12 +541,12 @@ async function carregar(){
   const loc=[...locaisDe($('#ilha').value)[+$('#local').value||0]];
   try{const g=localStorage.getItem(chave());if(g!=null)loc[4]=+g}catch(e){}
   $('#desf').textContent=`Ajuste das marés neste local: ${loc[4]>0?'+':''}${loc[4]} min.`;
-  try{localStorage.setItem('ilha',$('#ilha').value);localStorage.setItem('local',$('#local').value)}catch(e){}
+  try{localStorage.setItem('ilha',$('#ilha').value);localStorage.setItem('local',$('#local').selectedOptions[0]?.text||'')}catch(e){}
   $('#app').innerHTML='<p>A carregar previsão…</p>';$('#estado').textContent='';
   try{
     const r=await obter(loc);
     estado={dias:r.dias,sel:0};render();
-    $('#estado').textContent=`Local: ${loc[0]}. Atualizado às ${new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).${loc[6]?' Marés da Terceira: análise harmónica do Instituto Hidrográfico.':''}`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
+    $('#estado').textContent=`Local: ${loc[0]}. Atualizado às ${new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).${FREG[$('#ilha').value]?' Locais: freguesias da Carta Administrativa Oficial (GEO API PT).':''}${loc[6]?` Marés: análise harmónica do Instituto Hidrográfico (porto de ${loc[6]}).`:''}`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
   }catch(e){
     $('#app').innerHTML='<div class="erro"><b>Não foi possível obter a previsão.</b><br>Verifique a ligação à internet e carregue em Atualizar. Abra este ficheiro diretamente no navegador (não dentro de uma pré-visualização).</div>';
   }
@@ -461,7 +554,7 @@ async function carregar(){
 const sel=$('#ilha');
 Object.keys(ILHAS).forEach(n=>sel.add(new Option(n,n)));
 try{sel.value=localStorage.getItem('ilha')||'São Miguel'}catch(e){sel.value='São Miguel'}
-const chave=()=>`desf2|${$('#ilha').value}|${$('#local').value}`;
+const chave=()=>`desf3|${$('#ilha').value}|${$('#local').selectedOptions[0]?.text}`;
 function calibrar(){ // compara a hora oficial com a preia-mar do modelo mais próxima (sem ajuste) e guarda a diferença
   const v=$('#hora').value,d=estado.dias[0];if(!v||!d)return;
   const alvo=+v.slice(0,2)*60+ +v.slice(3,5),altas=extremos({...d,desf:0}).filter(e=>e.alta);if(!altas.length)return;
@@ -469,11 +562,16 @@ function calibrar(){ // compara a hora oficial com a preia-mar do modelo mais pr
   try{localStorage.setItem(chave(),Math.round(alvo-e.m))}catch(x){}
   carregar();
 }
-function preencherLocais(idx){const l=$('#local');l.innerHTML='';locaisDe(sel.value).forEach(([n],i)=>l.add(new Option(n,i)));l.value=l.querySelector(`option[value="${idx}"]`)?idx:0}
-let guardado=0;try{guardado=localStorage.getItem('local')||0}catch(e){}
+function preencherLocais(nome){const l=$('#local');l.innerHTML='';locaisDe(sel.value).forEach(([n],i)=>l.add(new Option(n,i)));const o=[...l.options].find(x=>x.text===nome);l.value=o?o.value:0}
+async function refrescarLocais(nome){ // depois de obter as freguesias, atualiza a lista e mantém o local escolhido
+  const ilha=sel.value;await carregarFreguesias(ilha);if(sel.value!==ilha)return;
+  const antes=$('#local').selectedOptions[0]?.text;preencherLocais(nome||antes);
+  if($('#local').selectedOptions[0]?.text!==antes)carregar();
+}
+let guardado='';try{guardado=localStorage.getItem('local')||''}catch(e){}
 preencherLocais(guardado);
-sel.onchange=()=>{preencherLocais(0);carregar()};$('#local').onchange=carregar;$('#rf').onclick=carregar;$('#cal').onclick=calibrar;$('#rep').onclick=()=>{try{localStorage.removeItem(chave())}catch(x){}carregar()};
-carregar();
+sel.onchange=()=>{preencherLocais('');carregar();refrescarLocais('')};$('#local').onchange=carregar;$('#rf').onclick=carregar;$('#cal').onclick=calibrar;$('#rep').onclick=()=>{try{localStorage.removeItem(chave())}catch(x){}carregar()};
+carregar();refrescarLocais(guardado);
 </script>
 </body>
 </html>
