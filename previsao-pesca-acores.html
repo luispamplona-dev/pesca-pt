@@ -109,9 +109,10 @@ const LOCAIS={"Terceira":[
  ["Praia da Vitória",38.733,-27.067,90],["Porto Martins",38.755,-27.055,80],["Lages",38.756,-27.090,110],
  ["Porto Judeu",38.678,-27.128,170],["Angra do Heroísmo",38.655,-27.220,180],["São Bartolomeu",38.667,-27.283,190],
  ["Cinco Ribeiras",38.700,-27.360,225],["Serreta",38.765,-27.365,315],["Biscoitos",38.790,-27.240,350],["Quatro Ribeiras",38.770,-27.155,20]]};
-// Desfasamento (minutos) a somar às marés do modelo para coincidir com a tabela oficial. Terceira: medido em Angra do Heroísmo.
-const DESF_ILHA={"Terceira":35};
-const locaisDe=i=>[["Toda a ilha (geral)",...ILHAS[i],null,DESF_ILHA[i]??0],...(LOCAIS[i]||[]).map(l=>[...l.slice(0,4),l[4]??DESF_ILHA[i]??0])];
+// Terceira: marés pela análise harmónica do IH (porto de Angra do Heroísmo). Concordância do IH para outros locais: [diferença de hora em min, fator de altura].
+const MODELO_ILHA={"Terceira":1};
+const CONC={"Praia da Vitória":[11,1.10]};
+const locaisDe=i=>[["Toda a ilha (geral)",...ILHAS[i],null,0,1,MODELO_ILHA[i]],...(LOCAIS[i]||[]).map(l=>[...l.slice(0,4),CONC[l[0]]?.[0]??0,CONC[l[0]]?.[1]??1,MODELO_ILHA[i]])];
 const HORAS=Array.from({length:24},(_,i)=>i); // dia completo (00h-23h): também se pesca à noite
 const JANELA=12; // horas anteriores usadas para medir a tendência da pressão
 
@@ -149,6 +150,21 @@ function nomeFase(p){
   if(p<.03||p>.97)return'Lua nova';if(p<.22)return'Lua crescente';if(p<.28)return'Quarto crescente';
   if(p<.47)return'Crescente gibosa';if(p<.53)return'Lua cheia';if(p<.72)return'Minguante gibosa';
   if(p<.78)return'Quarto minguante';return'Lua minguante';
+}
+
+/* ---------- Marés: análise harmónica (Angra do Heroísmo) ----------
+   Constantes ajustadas às previsões da Tabela de Marés 2026 do Instituto Hidrográfico (hora TU, alturas ao zero hidrográfico).
+   nível = z0 + fator·Σ(a·cos(ωt) + b·sin(ωt)), com t em horas desde 2026-01-01 00:00 UTC e ω em graus/hora. */
+const MARE={z0:1.0,c:[[28.9841042,0.435,-0.0073],[30.0,0.012,0.1601],[28.4397295,0.0862,-0.0141],[30.0821373,-0.0302,-0.0455],[27.8953548,0.014,-0.0016],[27.9682084,-0.0049,-0.0243],[28.5125831,0.0013,-0.0156],[29.5284789,-0.0088,-0.003],[29.9589333,0.0024,0.008],[15.0410686,0.022,0.0373],[13.9430356,0.0029,-0.0241],[14.9589314,0.0026,0.0123],[13.3986609,-0.0069,-0.0051],[57.9682084,0.0024,-0.0023],[58.9841042,-0.0008,0.0001],[57.4238337,-0.0001,-0.0],[86.9523127,-0.0043,0.0005],[87.9682084,-0.0001,-0.0011]]};
+const MARE_T0=Date.UTC(2026,0,1);
+function nivelMare(ms,fator=1){
+  const t=(ms-MARE_T0)/36e5;let h=0;
+  for(const[w,a,b]of MARE.c){const x=w*Math.PI/180*t;h+=a*Math.cos(x)+b*Math.sin(x)}
+  return MARE.z0+fator*h;
+}
+function t0Dia(data){ // meia-noite local dos Açores, em ms UTC
+  const m=new Date(data+'T12:00:00Z'),loc=new Date(m.toLocaleString('sv-SE',{timeZone:'Atlantic/Azores'}).replace(' ','T')+'Z');
+  return Date.UTC(+data.slice(0,4),+data.slice(5,7)-1,+data.slice(8,10))-(loc-m);
 }
 
 /* ---------- Solunar e marés ---------- */
@@ -256,12 +272,12 @@ const MODULOS=[
   const full=d.h1-d.h0===24,tem=d.extremos.length>0;
   let extra='';
   if(full){
-    const ex=d.extremos.map(e=>`${e.alta?'preia-mar':'baixa-mar'} ${hm(e.m)} (${e.y>0?'+':''}${f(e.y,1)} m)`).join('; ');
+    const ex=d.extremos.map(e=>`${e.alta?'preia-mar':'baixa-mar'} ${hm(e.m)} (${e.y>0&&!d.modeloMare?'+':''}${f(e.y,1)} m)`).join('; ');
     const sl=t=>d.sol.janelas.filter(j=>j.tipo===t).map(j=>`${hm(j.ini)}–${hm(j.fim)}`).join(' e ')||'nenhum';
     const og=d.ouro.map(o=>`${hm(o.a)}–${hm(o.b)}`).join('; ');
     extra=`<p class="val">Sol: nasce às ${hm(d.sun.nasce)} e põe-se às ${hm(d.sun.poe)}.</p><p class="val">Marés: ${ex||'sem dados'}.</p><p class="val">Solunar maior: ${sl('maior')}. Menor: ${sl('menor')}.</p>
      <p class="nota">${og?`Janelas de ouro (solunar ou nascer/pôr do sol junto à mudança de maré): <b>${og}</b>.`:'Neste dia não há coincidência com a mudança de maré.'}</p>
-     <p class="val">Horas das marés estimadas pelo modelo do Open-Meteo e corrigidas com um ajuste de ${d.desf>0?'+':''}${d.desf||0} min; use «Calibrar» para o afinar com a tabela oficial. Horas da Lua calculadas de forma aproximada.</p>`;
+     <p class="val">${d.modeloMare?`Marés calculadas com a análise harmónica do Instituto Hidrográfico (Tabela de Marés 2026, Angra do Heroísmo${d.desf?`, com ${d.desf>0?'+':''}${d.desf} min de concordância ou calibração`:''}), em hora dos Açores; alturas ao zero hidrográfico.`:`Horas das marés estimadas pelo modelo do Open-Meteo e corrigidas com um ajuste de ${d.desf>0?'+':''}${d.desf||0} min; use «Calibrar» para o afinar com a tabela oficial.`} Horas da Lua calculadas de forma aproximada.</p>`;
   }
   return{pontos:s,valor:`${nomeFase(faseLunar(d.data))}`,
    nota:tem?'Pesca-se melhor com a água em movimento, sobretudo dentro de um período solunar.':'Sem dados de maré: pontuação baseada só nos períodos solunares.',extra};
@@ -327,13 +343,13 @@ const DET={
    pontos:d.extremos.map(e=>({h:h(e.m),v:e.y,n:`${e.alta?'PM':'BM'} ${hm(e.m)}`,c:G.a,baixo:!e.alta})),
    marcas:sn?[{h:h(sn.nasce),n:`nascer ${hm(sn.nasce)}`,c:'var(--c3)'},{h:h(sn.poe),n:`pôr ${hm(sn.poe)}`,c:'var(--c3)'}]:[],
    faixa:d.hs,
-   leg:[{c:G.a,n:'Nível do mar (PM preia-mar, BM baixa-mar)'},{c:G.c,n:'Solunar (forte: maior, claro: menor)'},{c:'var(--ink)',n:'Noite'},{c:'var(--c3)',n:'Nascer e pôr do sol'},{c:'var(--c2)',n:'Faixa inferior: pontuação de cada hora'}]});
+   leg:[{c:G.a,n:'Altura da maré (PM preia-mar, BM baixa-mar)'},{c:G.c,n:'Solunar (forte: maior, claro: menor)'},{c:'var(--ink)',n:'Noite'},{c:'var(--c3)',n:'Nascer e pôr do sol'},{c:'var(--c2)',n:'Faixa inferior: pontuação de cada hora'}]});
  }};
 MODULOS.forEach(m=>m.det=DET[m.id]);
 
 /* ---------- Dados ---------- */
 async function obter(loc){
-  const[,lat,lon,face,desf=0]=loc,R=Math.PI/180,fim='&timezone=Atlantic%2FAzores&past_days=1&forecast_days=7';
+  const[,lat,lon,face,desf=0,fator=1,modelo]=loc,R=Math.PI/180,fim='&timezone=Atlantic%2FAzores&past_days=1&forecast_days=7';
   const base=`latitude=${lat}&longitude=${lon}${fim}`;
   // o modelo do mar só tem dados ao largo: desloca ~6 km para o lado do mar
   const mar=face==null?base:`latitude=${(lat+.06*Math.cos(face*R)).toFixed(4)}&longitude=${(lon+.06*Math.sin(face*R)/Math.cos(lat*R)).toFixed(4)}${fim}`;
@@ -358,6 +374,7 @@ async function obter(loc){
     d.pCtx=[...HORAS.slice(24-JANELA).map(h=>horas[ant]?.[h]?.p),...d.p];
     const dep=new Date(new Date(data+'T12:00:00Z').getTime()+864e5).toISOString().slice(0,10);
     d.mareCtx=[horas[ant]?.[22]?.mare,horas[ant]?.[23]?.mare,...d.mare,horas[dep]?.[0]?.mare,horas[dep]?.[1]?.mare]; // índice h+2 = hora h
+    if(modelo){const t0=t0Dia(data);d.mare=HORAS.map(h=>nivelMare(t0+h*36e5,fator));d.mareCtx=Array.from({length:28},(_,i)=>nivelMare(t0+(i-2)*36e5,fator));d.modeloMare=1}
     d.sun=sun[data];d.desf=desf;d.sol=solunar(data,lat,lon);
     if(face!=null){ // exposição do local: ondas e vento de frente para a costa pesam mais
       const ex=a=>a==null?null:Math.max(0,Math.cos((a-face)*R));
@@ -436,7 +453,7 @@ async function carregar(){
   try{
     const r=await obter(loc);
     estado={dias:r.dias,sel:0};render();
-    $('#estado').textContent=`Local: ${loc[0]}. Atualizado às ${new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
+    $('#estado').textContent=`Local: ${loc[0]}. Atualizado às ${new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).${loc[6]?' Marés da Terceira: análise harmónica do Instituto Hidrográfico.':''}`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
   }catch(e){
     $('#app').innerHTML='<div class="erro"><b>Não foi possível obter a previsão.</b><br>Verifique a ligação à internet e carregue em Atualizar. Abra este ficheiro diretamente no navegador (não dentro de uma pré-visualização).</div>';
   }
@@ -444,7 +461,7 @@ async function carregar(){
 const sel=$('#ilha');
 Object.keys(ILHAS).forEach(n=>sel.add(new Option(n,n)));
 try{sel.value=localStorage.getItem('ilha')||'São Miguel'}catch(e){sel.value='São Miguel'}
-const chave=()=>`desf|${$('#ilha').value}|${$('#local').value}`;
+const chave=()=>`desf2|${$('#ilha').value}|${$('#local').value}`;
 function calibrar(){ // compara a hora oficial com a preia-mar do modelo mais próxima (sem ajuste) e guarda a diferença
   const v=$('#hora').value,d=estado.dias[0];if(!v||!d)return;
   const alvo=+v.slice(0,2)*60+ +v.slice(3,5),altas=extremos({...d,desf:0}).filter(e=>e.alta);if(!altas.length)return;
