@@ -366,23 +366,35 @@ const DET={
 MODULOS.forEach(m=>m.det=DET[m.id]);
 
 /* ---------- Dados ---------- */
-async function obter(loc){
-  const[,lat,lon,face,desf=0,fator=1,modelo]=loc,R=Math.PI/180,fim='&timezone=Atlantic%2FAzores&past_days=1&forecast_days=7';
-  const base=`latitude=${lat}&longitude=${lon}${fim}`;
+const LOTE={};
+const COORD_FIM='&timezone=Atlantic%2FAzores&past_days=1&forecast_days=7';
+// Previsão de todos os locais da ilha numa só consulta (em blocos de 40): o mapa e o relatório usam os mesmos dados
+async function pedir(url,coords,vars){
+  const blocos=[];for(let i=0;i<coords.length;i+=40)blocos.push(coords.slice(i,i+40));
+  const rs=await Promise.all(blocos.map(b=>fetch(`${url}?latitude=${b.map(c=>c[0]).join(',')}&longitude=${b.map(c=>c[1]).join(',')}${COORD_FIM}${vars}`).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})));
+  return rs.flatMap(j=>Array.isArray(j)?j:[j]);
+}
+async function obterLote(locs){
+  const R=Math.PI/180,base=locs.map(l=>[l[1],l[2]]);
   // o modelo do mar só tem dados ao largo: desloca ~6 km para o lado do mar
-  const mar=face==null?base:`latitude=${(lat+.06*Math.cos(face*R)).toFixed(4)}&longitude=${(lon+.06*Math.sin(face*R)/Math.cos(lat*R)).toFixed(4)}${fim}`;
-  const urlF=`https://api.open-meteo.com/v1/forecast?${base}&wind_speed_unit=kmh&hourly=pressure_msl,wind_speed_10m,wind_gusts_10m,cloud_cover,precipitation,wind_direction_10m&daily=sunrise,sunset`;
-  const urlM=`https://marine-api.open-meteo.com/v1/marine?${mar}&hourly=wave_height,wave_direction,wave_period,sea_surface_temperature,sea_level_height_msl`;
-  const[rf,rm]=await Promise.allSettled([fetch(urlF).then(r=>{if(!r.ok)throw 0;return r.json()}),fetch(urlM).then(r=>{if(!r.ok)throw 0;return r.json()})]);
+  const mar=locs.map(([,lat,lon,face])=>face==null?[lat,lon]:[+(lat+.06*Math.cos(face*R)).toFixed(4),+(lon+.06*Math.sin(face*R)/Math.cos(lat*R)).toFixed(4)]);
+  const[rf,rm]=await Promise.allSettled([
+    pedir('https://api.open-meteo.com/v1/forecast',base,'&wind_speed_unit=kmh&hourly=pressure_msl,wind_speed_10m,wind_gusts_10m,cloud_cover,precipitation,wind_direction_10m&daily=sunrise,sunset'),
+    pedir('https://marine-api.open-meteo.com/v1/marine',mar,'&hourly=wave_height,wave_direction,wave_period,sea_surface_temperature,sea_level_height_msl')]);
   if(rf.status!=='fulfilled')throw new Error('Sem dados meteorológicos');
+  return{rf:rf.value,rm:rm.status==='fulfilled'?rm.value:[]};
+}
+// Constrói os dias de um local a partir dos dados em bruto (rf = tempo, rm = mar)
+function construir(loc,rf,rm){
+  const[,lat,lon,face,desf=0,fator=1,modelo]=loc,R=Math.PI/180;
   const horas={};
-  const juntar=(src,mapa)=>{if(!src)return;src.hourly.time.forEach((t,i)=>{
+  const juntar=(src,mapa)=>{if(!src?.hourly)return;src.hourly.time.forEach((t,i)=>{
     const dia=t.slice(0,10),h=+t.slice(11,13);horas[dia]??={};horas[dia][h]??={};
     for(const k in mapa)horas[dia][h][mapa[k]]=src.hourly[k][i];});};
-  juntar(rf.value,{pressure_msl:'p',wind_speed_10m:'v',wind_gusts_10m:'raj',cloud_cover:'nuv',precipitation:'chuva',wind_direction_10m:'vd'});
-  juntar(rm.status==='fulfilled'?rm.value:null,{wave_height:'onda',wave_direction:'od',wave_period:'per',sea_surface_temperature:'sst',sea_level_height_msl:'mare'});
+  juntar(rf,{pressure_msl:'p',wind_speed_10m:'v',wind_gusts_10m:'raj',cloud_cover:'nuv',precipitation:'chuva',wind_direction_10m:'vd'});
+  juntar(rm,{wave_height:'onda',wave_direction:'od',wave_period:'per',sea_surface_temperature:'sst',sea_level_height_msl:'mare'});
   const sun={},mm=t=>+t.slice(11,13)*60+ +t.slice(14,16);
-  rf.value.daily.time.forEach((t,i)=>{sun[t]={nasce:mm(rf.value.daily.sunrise[i]),poe:mm(rf.value.daily.sunset[i])}});
+  rf.daily.time.forEach((t,i)=>{sun[t]={nasce:mm(rf.daily.sunrise[i]),poe:mm(rf.daily.sunset[i])}});
   const hoje=new Date().toLocaleDateString('sv-SE',{timeZone:'Atlantic/Azores'});
   return{dias:Object.keys(horas).sort().filter(x=>x>=hoje).slice(0,7).map(data=>{
     const d={data};
@@ -402,7 +414,7 @@ async function obter(loc){
       ['v','raj'].forEach(k=>d[k]=d[k].map((x,i)=>ex(d.vd[i])==null||x==null?x:x*(.6+.4*ex(d.vd[i]))));
     }
     return pontuar(d);
-  }),marinho:rm.status==='fulfilled'};
+  }),marinho:!!rm?.hourly};
 }
 
 /* ---------- Pontuação ---------- */
@@ -564,28 +576,29 @@ function desenharMapa(){
   const k=Math.cos((la0+la1)/2*R),dx=(lo1-lo0)*k,dy=la1-la0,pad=.08*Math.max(dx,dy,.01),sw=dx+2*pad,sh=dy+2*pad;
   const e=Math.min(620/sw,380/sh),W=Math.round(sw*e)+20,H=Math.round(sh*e)+20;
   const X=lon=>(10+((lon-lo0)*k+pad)*e).toFixed(1),Y=lat=>(10+((la1-lat)+pad)*e).toFixed(1);
-  // vento e ondulação previstos para o dia escolhido: de onde vêm e com que intensidade
-  const dia=estado.dias?.[estado.sel],w=dia&&(dia.vRaw||dia.v),ow=dia&&(dia.ondaLargo||dia.onda);
-  const dv=dia?dirMedia(dia.vd,w):null,vv=dia?avg(w):null,dO=dia?dirMedia(dia.od,ow):null,hO=dia?avg(ow):null;
-  const expo=x=>{if(dv==null)return null;
+  // cada local usa a sua própria previsão (vento e ondas ao largo do dia escolhido), por isso as cores não dependem do local selecionado
+  const prev=x=>{const dd=estado.lote?.[x.i]?.dias?.[estado.sel];if(!dd)return null;
+    const w=dd.vRaw||dd.v,ow=dd.ondaLargo||dd.onda,dv=dirMedia(dd.vd,w),dO=dirMedia(dd.od,ow),vv=avg(w),hO=avg(ow);
+    if(dv==null)return null;
     const ev=Math.max(0,Math.cos((dv-x.face)*R))*Math.min(1,vv/35),eo=dO==null?0:Math.max(0,Math.cos((dO-x.face)*R))*Math.min(1,(hO||0)/2);
-    return Math.max(ev,eo)};
+    return{ex:Math.max(ev,eo),dv,vv,dO,hO}};
   const cor=v=>v==null?'var(--mute)':v<.25?'var(--c1)':v<.55?'var(--c3)':'var(--c5)';
   const atual=+$('#local').value;
   let g=geo.map(([,aneis])=>`<path class="ilha" d="${aneis.map(a=>a.map((p,i)=>(i?'L':'M')+X(p[0])+','+Y(p[1])).join('')+'Z').join('')}"/>`).join('');
   spots.forEach(x=>{
-    const ex=expo(x),c=cor(ex),sx=X(x.lon),sy=Y(x.lat),on=x.i===atual;
-    g+=`<g class="pt" data-i="${x.i}" transform="translate(${sx},${sy})"><title>${x.n}: costa virada a ${lado(x.face)}${ex!=null?`, exposição ${Math.round(ex*100)}%`:''}</title>
+    const pr=prev(x),ex=pr?.ex??null,c=cor(ex),sx=X(x.lon),sy=Y(x.lat),on=x.i===atual;
+    g+=`<g class="pt" data-i="${x.i}" transform="translate(${sx},${sy})"><title>${x.n}: costa virada a ${lado(x.face)}${pr?`; vento de ${lado(pr.dv)} ${f(pr.vv)} km/h${pr.dO!=null?`, ondas de ${lado(pr.dO)} ${f(pr.hO,1)} m`:''}; exposição ${Math.round(ex*100)}%`:''}</title>
       <g transform="rotate(${x.face})"><path d="M0,0 L0,-19 M0,-19 L-4,-12 M0,-19 L4,-12" stroke="${c}" stroke-width="2" fill="none"/></g>
       ${on?'<circle r="10" fill="none" stroke="var(--ink)" stroke-width="2"/>':''}<circle r="6" fill="${c}" stroke="var(--card)" stroke-width="1.5"/>
       ${spots.length<=20||on?`<text x="9" y="3">${x.n}</text>`:''}</g>`;
   });
   g+=`<text x="${W-28}" y="16" style="font-size:11px">N ↑</text>`;
+  const sp=prev(spots.find(x=>x.i===atual)||{face:0,i:-1});
   const leg=`<div class="leg"><span><i style="background:var(--c1)"></i>abrigado</span><span><i style="background:var(--c3)"></i>parcialmente exposto</span><span><i style="background:var(--c5)"></i>exposto</span>
-    ${dv!=null?`<span>Vento: ${seta((dv+180)%360)} de ${lado(dv)}, ${f(vv)} km/h</span>`:''}${dO!=null?`<span>Ondulação: de ${lado(dO)}, ${f(hO,1)} m</span>`:''}</div>
-    <div class="leg"><span>A seta de cada local aponta para o mar. A cor mostra a exposição ao vento e às ondas previstos para o dia escolhido. Clique num local para o selecionar.</span></div>`;
-  el.innerHTML=`<summary>Mapa dos locais de pesca${estado.dias?.length?' (cor = abrigo no dia escolhido)':''}</summary><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Mapa da ilha com os locais de pesca">${g}</svg>${leg}`;
-  el.onclick=ev=>{const t=ev.target.closest('[data-i]');if(!t)return;$('#local').value=t.dataset.i;carregar()};
+    ${sp&&spots.some(x=>x.i===atual)?`<span>Local escolhido: vento ${seta((sp.dv+180)%360)} de ${lado(sp.dv)}, ${f(sp.vv)} km/h</span>${sp.dO!=null?`<span>ondas de ${lado(sp.dO)}, ${f(sp.hO,1)} m</span>`:''}`:''}</div>
+    <div class="leg"><span>A seta de cada local aponta para o mar. A cor usa a previsão do próprio local (vento e ondas do dia escolhido) e a orientação da costa. Clique num local para o selecionar.</span></div>`;
+  el.innerHTML=`<summary>Mapa dos locais de pesca${estado.lote?' (cor = abrigo no dia escolhido)':''}</summary><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Mapa da ilha com os locais de pesca">${g}</svg>${leg}`;
+  el.onclick=ev=>{const t=ev.target.closest('[data-i]');if(!t)return;$('#local').value=t.dataset.i;$('#local').onchange()};
 }
 
 /* ---------- Interface ---------- */
@@ -624,24 +637,34 @@ function render(){
   desenharMapa();
 }
 
-async function carregar(){
-  const loc=[...locaisDe($('#ilha').value)[+$('#local').value||0]];
-  try{const g=localStorage.getItem(chave());if(g!=null)loc[4]=+g}catch(e){}
-  $('#desf').textContent=`Ajuste das marés neste local: ${loc[4]>0?'+':''}${loc[4]} min.`;
-  try{localStorage.setItem('ilha',$('#ilha').value);localStorage.setItem('local',$('#local').selectedOptions[0]?.text||'')}catch(e){}
+async function carregar(forcar){
+  const ilha=sel.value;
+  try{localStorage.setItem('ilha',ilha);localStorage.setItem('local',$('#local').selectedOptions[0]?.text||'')}catch(e){}
   $('#app').innerHTML='<p>A carregar previsão…</p>';$('#estado').textContent='';
   try{
-    const r=await obter(loc);
-    estado={dias:r.dias,sel:0};render();
-    $('#estado').textContent=`Local: ${loc[0]}. Atualizado às ${new Date().toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).${FREG[$('#ilha').value]?' Locais: freguesias da Carta Administrativa Oficial (GEO API PT).':''}${loc[6]?` Marés: análise harmónica do Instituto Hidrográfico (porto de ${loc[6]}).`:''}`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
+    await carregarFreguesias(ilha); // a lista de locais tem de estar completa antes de pedir a previsão
+    if(sel.value!==ilha)return;
+    if($('#local').options.length!==locaisDe(ilha).length)preencherLocais(alvoLocal);
+    const locs=locaisDe(ilha).map(l=>{const c=[...l];try{const g=localStorage.getItem(chave(l[0]));if(g!=null)c[4]=+g}catch(e){}return c});
+    let L=LOTE[ilha];
+    if(!L||forcar||L.n!==locs.length){const r=await obterLote(locs);L=LOTE[ilha]={n:locs.length,hora:new Date(),...r}}
+    if(sel.value!==ilha)return;
+    const res=locs.map((l,i)=>L.rf[i]?.daily?construir(l,L.rf[i],L.rm[i]):null);
+    const idx=+$('#local').value||0,r=res[idx],loc=locs[idx];
+    if(!r)throw new Error('Sem dados para este local');
+    $('#desf').textContent=`Ajuste das marés neste local: ${loc[4]>0?'+':''}${loc[4]} min.`;
+    estado={dias:r.dias,sel:Math.min(estado.sel||0,r.dias.length-1),lote:res};render();
+    $('#estado').textContent=`Local: ${loc[0]}. Atualizado às ${L.hora.toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).${FREG[ilha]?' Locais: freguesias da Carta Administrativa Oficial (GEO API PT).':''}${loc[6]?` Marés: análise harmónica do Instituto Hidrográfico (porto de ${loc[6]}).`:''}`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
   }catch(e){
+    console.warn(e);
     $('#app').innerHTML='<div class="erro"><b>Não foi possível obter a previsão.</b><br>Verifique a ligação à internet e carregue em Atualizar. Abra este ficheiro diretamente no navegador (não dentro de uma pré-visualização).</div>';
   }
 }
+let alvoLocal=''; // nome do local que o utilizador escolheu (a lista pode ser refeita quando chegam as freguesias)
 const sel=$('#ilha');
 Object.keys(ILHAS).forEach(n=>sel.add(new Option(n,n)));
 try{sel.value=localStorage.getItem('ilha')||'São Miguel'}catch(e){sel.value='São Miguel'}
-const chave=()=>`desf3|${$('#ilha').value}|${$('#local').selectedOptions[0]?.text}`;
+const chave=(n=$('#local').selectedOptions[0]?.text)=>`desf3|${$('#ilha').value}|${n}`;
 function calibrar(){ // compara a hora oficial com a preia-mar do modelo mais próxima (sem ajuste) e guarda a diferença
   const v=$('#hora').value,d=estado.dias[0];if(!v||!d)return;
   const alvo=+v.slice(0,2)*60+ +v.slice(3,5),altas=extremos({...d,desf:0}).filter(e=>e.alta);if(!altas.length)return;
@@ -650,15 +673,12 @@ function calibrar(){ // compara a hora oficial com a preia-mar do modelo mais pr
   carregar();
 }
 function preencherLocais(nome){const l=$('#local');l.innerHTML='';locaisDe(sel.value).forEach(([n],i)=>l.add(new Option(n,i)));const o=[...l.options].find(x=>x.text===nome);l.value=o?o.value:0}
-async function refrescarLocais(nome){ // depois de obter as freguesias, atualiza a lista e mantém o local escolhido
-  const ilha=sel.value;await carregarFreguesias(ilha);if(sel.value!==ilha)return;
-  const antes=$('#local').selectedOptions[0]?.text;preencherLocais(nome||antes);desenharMapa();
-  if($('#local').selectedOptions[0]?.text!==antes)carregar();
-}
-let guardado='';try{guardado=localStorage.getItem('local')||''}catch(e){}
-preencherLocais(guardado);
-sel.onchange=()=>{preencherLocais('');carregar();refrescarLocais('')};$('#local').onchange=carregar;$('#rf').onclick=carregar;$('#cal').onclick=calibrar;$('#rep').onclick=()=>{try{localStorage.removeItem(chave())}catch(x){}carregar()};
-carregar();refrescarLocais(guardado);
+try{alvoLocal=localStorage.getItem('local')||''}catch(e){}
+preencherLocais(alvoLocal);
+const escolher=()=>{alvoLocal=$('#local').selectedOptions[0]?.text||'';carregar()};
+sel.onchange=()=>{alvoLocal='';preencherLocais('');carregar()};$('#local').onchange=escolher;$('#rf').onclick=()=>carregar(true);$('#cal').onclick=calibrar;
+$('#rep').onclick=()=>{try{localStorage.removeItem(chave())}catch(x){}carregar()};
+carregar();
 </script>
 </body>
 </html>
