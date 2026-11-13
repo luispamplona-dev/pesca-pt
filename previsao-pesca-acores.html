@@ -79,6 +79,14 @@ svg.sp{display:block;margin-top:6px;width:100%;max-width:260px;height:36px}
 .m{display:block}
 .m small{display:block;margin-bottom:3px;font-size:.78rem}
 .m .bar{display:block}
+.hora{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;font-size:.88rem}
+.hora input{flex:1;min-width:160px}
+.hora output{min-width:64px;font-weight:600}
+.hora button{padding:5px 10px}
+.hbig{font-size:2.4rem;font-weight:800;line-height:1;letter-spacing:-.02em;color:var(--c)}
+.hbig small{font-size:.9rem;font-weight:600}
+.hbig span{display:block;font-size:.85rem;font-weight:600;letter-spacing:0;text-align:right}
+.hbig .hh{text-align:right;color:var(--ink)}
 .estado{color:var(--mute);font-size:.85rem;margin-top:16px}
 .erro{padding:16px;border:1px solid var(--c5);border-radius:10px;background:var(--card)}
 </style>
@@ -91,12 +99,23 @@ svg.sp{display:block;margin-top:6px;width:100%;max-width:260px;height:36px}
     <p>Qualidade prevista por dia, calculada a partir de vários fatores meteorológicos e do mar.</p>
   </div>
   <div class="ctrl">
+    <select id="tipo" aria-label="Tipo de pesca"></select>
     <select id="ilha" aria-label="Ilha"></select>
     <select id="local" aria-label="Local de pesca"></select>
     <button class="rf" id="rf" type="button">Atualizar</button>
   </div>
 </header>
-<details class="mapa" id="mapa" open></details>
+<details class="mapa" id="mapa" open>
+  <summary id="mapaTitulo">Mapa dos locais de pesca</summary>
+  <div id="mapaConteudo"></div>
+  <div class="hora">
+    <label for="hora">Hora do dia</label>
+    <input type="range" id="hora" min="0" max="23" step="1" value="12" aria-describedby="horaVal">
+    <output id="horaVal">dia todo</output>
+    <button class="rf" id="horaPlay" type="button">▶ Animar</button>
+    <button class="rf" id="horaTodo" type="button">Dia todo</button>
+  </div>
+</details>
 <div id="app" class="grid" aria-live="polite"><p>A carregar previsão…</p></div>
 <p class="estado" id="estado"></p>
 <div class="calib">
@@ -228,7 +247,7 @@ function horaMares(d){
   const c=d.mareCtx,o=(d.desf||0)/60;
   return HORAS.map(h=>{
     const a=nivel(c,h+1-o),b=nivel(c,h-1-o),sp=a!=null&&b!=null?Math.abs(a-b)/2:null;
-    const base=sp==null?60:interp(sp,[[0,35],[.05,50],[.12,80],[.2,100]]);
+    const base=sp==null?60:interp(sp,TIPOS[tipoAtual].corrente);
     const s=d.sol.janelas.filter(j=>h*60+30>=j.ini&&h*60+30<=j.fim).reduce((a,j)=>Math.max(a,j.tipo==='maior'?1:.6),0);
     const mid=h*60+30,ds=d.sun?Math.min(Math.abs(mid-d.sun.nasce),Math.abs(mid-d.sun.poe)):999;
     const u=ds<=45?1:ds<=90?.5:0; // luz de amanhecer e entardecer
@@ -245,11 +264,56 @@ function tira(d){
   return`<div class="tira">${d.hs.map((v,h)=>`<i title="${String(h).padStart(2,'0')}h: ${Math.round(v)}%" style="background:${tier(v).c}"></i>`).join('')}</div><div class="eixo"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>`;
 }
 
+/* ---------- Fase da lua ---------- */
+/* ---------- Tipos de pesca ----------
+   Cada tipo tem os seus pesos (somam 1,00) e o que conta como condição ideal:
+   onda / vento = tabelas [valor, pontos]; corrente = velocidade da maré em m/h; lua = pontuação da fase (0 nova, 0,25 quarto crescente, 0,5 cheia, 0,75 quarto minguante). */
+const mortasDaLua=p=>(1-Math.cos(4*Math.PI*p))/2; // 1 nos quartos (marés mortas), 0 na nova e na cheia (águas vivas)
+const TIPOS={
+ fundo:{nome:'Pesca de fundo',
+  pesos:{pressao:.14,ondulacao:.22,vento:.14,lua:.18,mares:.14,ceu:.10,agua:.08},
+  onda:[[0,75],[.3,82],[.8,100],[1.5,88],[2,58],[3,22],[4,5],[5,0]],
+  vento:[[0,95],[10,100],[20,72],[30,40],[45,10],[60,0]],
+  corrente:[[0,55],[.04,75],[.09,90],[.14,75],[.2,50],[.3,35]],
+  lua:p=>25+60*mortasDaLua(p)+15*(1+Math.cos(2*Math.PI*(p-.75)))/2, // ideal: quarto minguante
+  luaNota:['Marés mortas e correntes fracas: a chumbada assenta no fundo rochoso e prende menos. Fase ideal para a pesca de fundo.','Marés a aproximar-se de mortas: correntes moderadas, a chumbada ainda assenta razoavelmente.','Águas vivas, com mais corrente: a chumbada rola no fundo e prende mais.'],
+  luaLeg:'o quarto minguante é o ideal para o fundo'},
+ boia:{nome:'Pesca à boia',
+  pesos:{pressao:.10,ondulacao:.22,vento:.26,lua:.06,mares:.16,ceu:.12,agua:.08},
+  onda:[[0,85],[.3,95],[.8,100],[1.2,80],[1.8,45],[2.5,15],[3.5,0]],
+  vento:[[0,95],[8,100],[15,70],[22,35],[30,10],[45,0]],
+  corrente:[[0,45],[.05,70],[.1,95],[.16,85],[.25,60]],
+  lua:p=>62+16*mortasDaLua(p), // pouco influente: favorece ligeiramente as marés mortas
+  luaNota:['Marés mortas: boia estável e fácil de controlar.','Corrente moderada: a boia desliza com a água sem se descontrolar.','Águas vivas: mais corrente, a boia arrasta mais depressa e exige mais lastro.'],
+  luaLeg:'na pesca à boia a fase da lua pesa pouco'},
+ corrico:{nome:'Corrico e spinning',
+  pesos:{pressao:.12,ondulacao:.20,vento:.16,lua:.08,mares:.24,ceu:.10,agua:.10},
+  onda:[[0,60],[.5,85],[1,100],[1.8,90],[2.4,55],[3,22],[4,5],[5,0]],
+  vento:[[0,85],[10,100],[20,85],[30,55],[45,15],[60,0]],
+  corrente:[[0,35],[.05,50],[.12,80],[.2,100]],
+  lua:p=>35+65*(1-mortasDaLua(p)), // ideal: águas vivas (nova e cheia), mais corrente e predadores ativos
+  luaNota:['Águas vivas (lua nova ou cheia): mais corrente e predadores ativos, favorável para artificiais.','Corrente moderada: atividade razoável.','Marés mortas: menos corrente e menos movimento de peixe-isco.'],
+  luaLeg:'para corrico e spinning favorecem-se as águas vivas (lua nova e cheia)'}
+};
+let tipoAtual='fundo';
+const pesoDe=m=>TIPOS[tipoAtual].pesos[m.id]??m.peso;
+const luaPontos=(p,t=tipoAtual)=>TIPOS[t].lua(p);
+function proxQuarto(data){ // próxima passagem pelo quarto minguante (fase 0,75)
+  const dia=k=>new Date(new Date(data+'T12:00:00Z').getTime()+k*864e5).toISOString().slice(0,10);
+  for(let k=1;k<=31;k++)if(faseLunar(dia(k-1))<.75&&faseLunar(dia(k))>=.75)return dia(k);
+  return null;
+}
+function disco(p,r){ // disco lunar: a parte iluminada cresce à direita e míngua à esquerda
+  const q=p<.5?p:1-p,c=Math.cos(2*Math.PI*q),rx=Math.abs(c)*r;
+  return`<circle r="${r}" fill="var(--track)" stroke="var(--mute)" stroke-width="1"/><path d="M0,${-r} A${r},${r} 0 0 1 0,${r} A${rx.toFixed(2)},${r} 0 0 ${c>=0?0:1} 0,${-r}Z" fill="var(--c3)" ${p>.5?'transform="scale(-1,1)"':''}/>`;
+}
+
 /* ---------- Módulos (um por fator) ----------
+   Os pesos somam 1,00 (ajuste-os no campo «peso» de cada módulo).
    Cada módulo recebe os dados do dia e devolve {pontos 0-100, valor, nota} ou null se não houver dados.
    Para acrescentar um fator, basta juntar um objeto a esta lista. */
 const MODULOS=[
-{id:'pressao',nome:'Pressão atmosférica',peso:.20,avaliar(d){
+{id:'pressao',nome:'Pressão atmosférica',peso:.15,avaliar(d){
   const a=vals(d.p),c=d.pCtx;if(a.length<4)return null;
   // tendência: para cada hora do dia, variação face às JANELA horas anteriores; depois média do dia
   const ds=[];for(let i=JANELA;i<c.length;i++)if(c[i]!=null&&c[i-JANELA]!=null)ds.push(c[i]-c[i-JANELA]);
@@ -265,27 +329,34 @@ const MODULOS=[
    :'Subida rápida: água turva e peixe irregular.';
   return{pontos:clamp(s),valor:`${f(pm)} hPa, tendência ${seta} ${delta>0?'+':''}${f(delta,1)} hPa por cada ${JANELA} h`,nota};
 }},
-{id:'ondulacao',nome:'Ondulação',peso:.26,avaliar(d){
+{id:'ondulacao',nome:'Ondulação',peso:.22,avaliar(d){
   const h=avg(d.onda);if(h==null)return null;
   const hm=mx(d.onda),per=avg(d.per);
-  const s=interp(hm,[[0,75],[.3,82],[.8,100],[1.5,88],[2,58],[3,22],[4,5],[5,0]]);
+  const s=interp(hm,TIPOS[tipoAtual].onda);
   const nota=hm<.3?'Mar chão: peixe mais desconfiado, use fio fino.'
    :hm<1.5?'Ondulação ideal: mexe o fundo sem pôr em risco a margem.'
    :hm<2.2?'Ondulação já forte: escolha locais abrigados.'
    :'Ondulação perigosa na margem: evite os rochedos expostos.';
   return{pontos:clamp(s),valor:`${dirMedia(d.od,d.ondaLargo||d.onda)!=null?`Ondas de ${lado(dirMedia(d.od,d.ondaLargo||d.onda))}. `:''}Máx. ${f(hm,1)} m no local${d.ondaLargo?` (ao largo ${f(mx(d.ondaLargo),1)} m)`:''}, período médio ${f(per,0)} s`,nota};
 }},
-{id:'vento',nome:'Vento',peso:.20,avaliar(d){
+{id:'vento',nome:'Vento',peso:.18,avaliar(d){
   const v=avg(d.v);if(v==null)return null;
   const r=mx(d.raj),vr=avg(d.vRaw||d.v),dv=dirMedia(d.vd,d.vRaw||d.v);
-  let s=interp(v,[[0,95],[10,100],[20,72],[30,40],[45,10],[60,0]]);
+  let s=interp(v,TIPOS[tipoAtual].vento);
   s-=Math.max(0,((r??v)-v-15)*.8);
   const nota=v<12?'Vento fraco: lançamentos fáceis e linha controlada.'
    :v<25?'Vento moderado: aceitável, procure abrigo.'
    :'Vento forte: lançar e sentir a ferrada fica difícil.';
   return{pontos:clamp(s),valor:`${dv!=null?`Vento de ${lado(dv)}, `:''}média ${f(vr)} km/h${Math.abs(vr-v)>.5?` (no local, com abrigo: ${f(v)} km/h)`:''}, rajadas até ${f(r)} km/h`,nota};
 }},
-{id:'mares',nome:'Marés, solunar e luz do dia',peso:.16,avaliar(d){
+{id:'lua',nome:'Fase da lua',peso:.14,avaliar(d){
+  const p=faseLunar(d.data),s=luaPontos(p),il=(1-Math.cos(2*Math.PI*p))/2*100;
+  const ln=TIPOS[tipoAtual].luaNota,nota=s>=80?ln[0]:s>=55?ln[1]:ln[2];
+  let extra='';
+  if(d.h1-d.h0===24){const q=proxQuarto(d.data);if(q)extra=`<p class="val">Próximo quarto minguante: ${new Date(q+'T12:00:00').toLocaleDateString('pt-PT',{weekday:'long',day:'numeric',month:'long'})}.</p>`}
+  return{pontos:s,valor:`${nomeFase(p)}, ${f(il)}% iluminada`,nota,extra};
+}},
+{id:'mares',nome:'Marés, solunar e luz do dia',peso:.15,avaliar(d){
   const s=avg(d.hs.slice(d.h0,d.h1));if(s==null)return null;
   const full=d.h1-d.h0===24,tem=d.extremos.length>0;
   let extra='';
@@ -300,12 +371,12 @@ const MODULOS=[
   return{pontos:s,valor:`${nomeFase(faseLunar(d.data))}`,
    nota:tem?'Pesca-se melhor com a água em movimento, sobretudo dentro de um período solunar.':'Sem dados de maré: pontuação baseada só nos períodos solunares.',extra};
 }},
-{id:'ceu',nome:'Céu e chuva',peso:.12,avaliar(d){
+{id:'ceu',nome:'Céu e chuva',peso:.10,avaliar(d){
   const n=avg(d.nuv),c=sm(d.chuva);if(n==null)return null;
   const sn=interp(n,[[0,72],[40,95],[80,95],[100,78]]);
-  const sc=interp(c??0,[[0,100],[1,80],[5,45],[12,15],[25,0]]);
+  const esc=24/((d.h1-d.h0)||24),sc=interp((c??0)*esc,[[0,100],[1,80],[5,45],[12,15],[25,0]]);
   return{pontos:clamp(.4*sn+.6*sc),valor:`Nuvens ${f(n)}%, chuva ${f(c,1)} mm`,
-   nota:c>5?'Chuva relevante: turva a água e torna a pesca desconfortável.':n>=40&&n<=85?'Céu parcialmente nublado: boa luminosidade para pescar.':'Condições de luz sem grande efeito.'};
+   nota:c*esc>5?'Chuva relevante: turva a água e torna a pesca desconfortável.':n>=40&&n<=85?'Céu parcialmente nublado: boa luminosidade para pescar.':'Condições de luz sem grande efeito.'};
 }},
 {id:'agua',nome:'Temperatura da água',peso:.06,avaliar(d){
   const t=avg(d.sst);if(t==null)return null;
@@ -352,6 +423,13 @@ const DET={
  vento:d=>grafico({titulo:'Vento (km/h)',s:[{v:d.v,c:G.a,area:1},{v:d.raj,c:G.b,dash:1,semPontos:1}],min:0,dec:0,un:'km/h',refs:[{y:30,n:'vento forte'},{y:50,n:'rajadas perigosas'}],leg:[{c:G.a,n:'Vento médio'},{c:G.b,n:'Rajadas'}]})+setasVento(d),
  ceu:d=>grafico({titulo:'Nebulosidade (%)',s:[{v:d.nuv,c:G.a,area:1}],min:0,max:100,dec:0,un:'%',H:150})+grafico({titulo:'Precipitação (mm por hora)',s:[{v:d.chuva,c:G.a,t:'barra'}],min:0,un:'mm',H:150}),
  agua:d=>grafico({titulo:'Temperatura da água do mar (°C)',s:[{v:d.sst,c:G.b,area:1}],un:'°C'}),
+ lua:d=>{
+  const ds=(estado.dias||[]).slice(0,7);if(!ds.length)return'';
+  const W=640,dx=(W-60)/Math.max(1,ds.length-1);let g='';
+  ds.forEach((x,i)=>{const p=faseLunar(x.data),sc=luaPontos(p),cx=(30+i*dx).toFixed(1);
+    g+=`<g transform="translate(${cx},34)">${x.data===d.data?'<circle r="22" fill="none" stroke="var(--ink)" stroke-width="2"/>':''}${disco(p,17)}</g><text x="${cx}" y="76" text-anchor="middle" style="font-size:11px;fill:var(--ink)">${i===0?'hoje':nomeDia(x.data,{weekday:'short'})}</text><text x="${cx}" y="92" text-anchor="middle" style="font-size:11px;font-weight:600;fill:${tier(sc).c}">${Math.round(sc)}%</text>`});
+  return`<figure class="fig"><figcaption>Fase da lua nos próximos dias</figcaption><svg class="graf" viewBox="0 0 ${W} 100" role="img" aria-label="Fase da lua nos próximos dias">${g}</svg><div class="leg"><span>Percentagem = adequação da fase à pesca de fundo (${TIPOS[tipoAtual].luaLeg}). O anel marca o dia escolhido.</span></div></figure>`;
+ },
  mares:d=>{
   if(!d.extremos.length)return'<p class="val">Sem dados de maré para desenhar o gráfico.</p>';
   const o=(d.desf||0)/60,sn=d.sun,h=m=>m/60;
@@ -420,7 +498,7 @@ function construir(loc,rf,rm){
 /* ---------- Pontuação ---------- */
 function calcular(d){
   const mods=MODULOS.map(m=>({m,r:m.avaliar(d)})),ok=mods.filter(x=>x.r);
-  let t=ok.reduce((s,x)=>s+x.m.peso*x.r.pontos,0)/ok.reduce((s,x)=>s+x.m.peso,0);
+  let t=ok.reduce((s,x)=>s+pesoDe(x.m)*x.r.pontos,0)/ok.reduce((s,x)=>s+pesoDe(x.m),0);
   const av=[],hs=mx(d.onda),rj=mx(d.raj);
   if((hs!=null&&hs>=3)||(rj!=null&&rj>=65)){t=Math.min(t,20);av.push('Condições perigosas na margem (ondulação ou rajadas extremas). Não recomendado pescar.');}
   else if((hs!=null&&hs>=2.2)||(rj!=null&&rj>=50)){t=Math.min(t,45);av.push('Risco para quem pesca nas rochas: ondulação ou rajadas fortes. Pesque só em locais abrigados.');}
@@ -431,6 +509,11 @@ function fatiar(d,a,b){
   const o={data:d.data,sol:d.sol,hs:d.hs,extremos:d.extremos,ouro:d.ouro,h0:a,h1:b,p:d.p.slice(a,b),pCtx:d.pCtx.slice(a,b+JANELA)};
   ['v','raj','nuv','chuva','onda','per','sst','vRaw','vd','od'].forEach(k=>o[k]=d[k].slice(a,b));
   return o;
+}
+function pontuarHora(d,h){
+  const o=fatiar(d,Math.max(0,h-1),Math.min(24,h+2));
+  o.p=d.p;o.pCtx=d.pCtx;
+  return calcular(o).total;
 }
 function pontuar(d){
   d.h0=0;d.h1=24;d.extremos=extremos(d);d.hs=horaMares(d);d.ouro=ouro(d);
@@ -464,7 +547,7 @@ function faixaSetas(titulo,dirs,w,un,dec,leg){ // direção de 3 em 3 horas; dir
   for(let h=0;h<24;h+=3){
     const a=dirMedia(dirs.slice(h,h+3),w.slice(h,h+3));if(a==null)continue;
     const x=46+(h+1.5)/24*(640-46-14);
-    g+=`<g transform="translate(${x.toFixed(1)},26) rotate(${Math.round((a+180)%360)})"><path d="M0,-16 L7,-4 L2,-4 L2,14 L-2,14 L-2,-4 L-7,-4 Z" fill="var(--g1)"/></g><text x="${x.toFixed(1)}" y="56" text-anchor="middle" style="font-size:11px">${curto(a)}</text><text x="${x.toFixed(1)}" y="70" text-anchor="middle" style="font-size:10px;fill:var(--mute)">${f(avg(w.slice(h,h+3)),dec)} ${un}</text>`;
+    g+=`<g transform="translate(${x.toFixed(1)},26) rotate(${Math.round((a+180)%360)})"><path d="M0,-16 L7,-4 L2,-4 L2,14 L-2,14 L-2,-4 L-7,-4 Z" fill="var(--g1)"/></g><text x="${x.toFixed(1)}" y="56" text-anchor="middle" style="font-size:11px;fill:var(--ink)">${curto(a)}</text><text x="${x.toFixed(1)}" y="70" text-anchor="middle" style="font-size:10px;fill:var(--mute)">${f(avg(w.slice(h,h+3)),dec)} ${un}</text>`;
   }
   return`<figure class="fig"><figcaption>${titulo}</figcaption><svg class="graf" viewBox="0 0 640 78" role="img" aria-label="${titulo}">${g}</svg><div class="leg"><span>${leg}</span></div></figure>`;
 }
@@ -567,37 +650,46 @@ async function carregarFreguesias(ilha){
 const aneisX=g=>(g.type==='MultiPolygon'?g.coordinates:[g.coordinates]).flatMap(q=>q[0].map(p=>p[0]));
 
 /* ---------- Mapa da ilha: freguesias, orientação da costa e abrigo ao vento e às ondas ---------- */
+const flecha=(x,y,az,len,c,o)=>`<g transform="translate(${x.toFixed(1)},${y.toFixed(1)}) rotate(${Math.round(az)})" opacity="${o}"><path d="M0,${len/2} L0,${-len/2} M0,${-len/2} L-4,${-len/2+7} M0,${-len/2} L4,${-len/2+7}" stroke="${c}" stroke-width="2.2" fill="none" stroke-linecap="round"/></g>`;
 function desenharMapa(){
-  const el=$('#mapa'),ilha=sel.value,R=Math.PI/180;
+  const el=$('#mapaConteudo'),R=Math.PI/180,ilha=sel.value;
   const spots=locaisDe(ilha).map((l,i)=>({i,n:l[0],lat:l[1],lon:l[2],face:l[3]})).filter(x=>x.face!=null);
   const geo=GEOM[ilha]||[],pts=geo.length?geo.flatMap(g=>g[1].flat()):spots.map(x=>[x.lon,x.lat]);
-  if(!pts.length){el.innerHTML='';return}
+  $('#mapa').hidden=!pts.length;if(!pts.length)return;
   const lo0=Math.min(...pts.map(p=>p[0])),lo1=Math.max(...pts.map(p=>p[0])),la0=Math.min(...pts.map(p=>p[1])),la1=Math.max(...pts.map(p=>p[1]));
   const k=Math.cos((la0+la1)/2*R),dx=(lo1-lo0)*k,dy=la1-la0,pad=.08*Math.max(dx,dy,.01),sw=dx+2*pad,sh=dy+2*pad;
   const e=Math.min(620/sw,380/sh),W=Math.round(sw*e)+20,H=Math.round(sh*e)+20;
   const X=lon=>(10+((lon-lo0)*k+pad)*e).toFixed(1),Y=lat=>(10+((la1-lat)+pad)*e).toFixed(1);
-  // cada local usa a sua própria previsão (vento e ondas ao largo do dia escolhido), por isso as cores não dependem do local selecionado
+  // hora escolhida na barra (null = média do dia). Cada local usa a sua própria previsão.
+  const h=estado.hora,pick=a=>h==null?a:[a?.[h]];
   const prev=x=>{const dd=estado.lote?.[x.i]?.dias?.[estado.sel];if(!dd)return null;
-    const w=dd.vRaw||dd.v,ow=dd.ondaLargo||dd.onda,dv=dirMedia(dd.vd,w),dO=dirMedia(dd.od,ow),vv=avg(w),hO=avg(ow);
+    const w=dd.vRaw||dd.v,ow=dd.ondaLargo||dd.onda,dv=dirMedia(pick(dd.vd),pick(w)),dO=dirMedia(pick(dd.od),pick(ow)),vv=avg(pick(w)),hO=avg(pick(ow));
     if(dv==null)return null;
     const ev=Math.max(0,Math.cos((dv-x.face)*R))*Math.min(1,vv/35),eo=dO==null?0:Math.max(0,Math.cos((dO-x.face)*R))*Math.min(1,(hO||0)/2);
     return{ex:Math.max(ev,eo),dv,vv,dO,hO}};
+  const prs=spots.map(prev),ok=prs.filter(Boolean),oo=ok.filter(p=>p.dO!=null);
+  const dvI=dirMedia(ok.map(p=>p.dv),ok.map(p=>p.vv)),vvI=avg(ok.map(p=>p.vv)),dOI=dirMedia(oo.map(p=>p.dO),oo.map(p=>p.hO)),hOI=avg(oo.map(p=>p.hO));
   const cor=v=>v==null?'var(--mute)':v<.25?'var(--c1)':v<.55?'var(--c3)':'var(--c5)';
   const atual=+$('#local').value;
   let g=geo.map(([,aneis])=>`<path class="ilha" d="${aneis.map(a=>a.map((p,i)=>(i?'L':'M')+X(p[0])+','+Y(p[1])).join('')+'Z').join('')}"/>`).join('');
-  spots.forEach(x=>{
-    const pr=prev(x),ex=pr?.ex??null,c=cor(ex),sx=X(x.lon),sy=Y(x.lat),on=x.i===atual;
-    g+=`<g class="pt" data-i="${x.i}" transform="translate(${sx},${sy})"><title>${x.n}: costa virada a ${lado(x.face)}${pr?`; vento de ${lado(pr.dv)} ${f(pr.vv)} km/h${pr.dO!=null?`, ondas de ${lado(pr.dO)} ${f(pr.hO,1)} m`:''}; exposição ${Math.round(ex*100)}%`:''}</title>
+  // vento: campo de setas sobre a ilha (apontam para onde sopra); ondas: setas a entrar pelo lado de onde vêm
+  if(dvI!=null)for(let a=1;a<=4;a++)for(let b=1;b<=3;b++)g+=flecha(W*a/5,H*b/4,(dvI+180)%360,12+Math.min(vvI,40)/40*14,'var(--g1)',.4);
+  if(dOI!=null){const th=dOI*R,d=.44*Math.min(W,H);
+    for(let q=-2;q<=2;q++)g+=flecha(Math.min(W-14,Math.max(14,W/2+Math.sin(th)*d+Math.cos(th)*q*34)),Math.min(H-14,Math.max(14,H/2-Math.cos(th)*d+Math.sin(th)*q*34)),(dOI+180)%360,22,'var(--g3)',.85)}
+  spots.forEach((x,n)=>{
+    const pr=prs[n],ex=pr?.ex??null,c=cor(ex),on=x.i===atual;
+    g+=`<g class="pt" data-i="${x.i}" transform="translate(${X(x.lon)},${Y(x.lat)})"><title>${x.n}: costa virada a ${lado(x.face)}${pr?`; vento de ${lado(pr.dv)} ${f(pr.vv)} km/h${pr.dO!=null?`, ondas de ${lado(pr.dO)} ${f(pr.hO,1)} m`:''}; exposição ${Math.round(ex*100)}%`:''}</title>
       <g transform="rotate(${x.face})"><path d="M0,0 L0,-19 M0,-19 L-4,-12 M0,-19 L4,-12" stroke="${c}" stroke-width="2" fill="none"/></g>
       ${on?'<circle r="10" fill="none" stroke="var(--ink)" stroke-width="2"/>':''}<circle r="6" fill="${c}" stroke="var(--card)" stroke-width="1.5"/>
       ${spots.length<=20||on?`<text x="9" y="3">${x.n}</text>`:''}</g>`;
   });
-  g+=`<text x="${W-28}" y="16" style="font-size:11px">N ↑</text>`;
-  const sp=prev(spots.find(x=>x.i===atual)||{face:0,i:-1});
-  const leg=`<div class="leg"><span><i style="background:var(--c1)"></i>abrigado</span><span><i style="background:var(--c3)"></i>parcialmente exposto</span><span><i style="background:var(--c5)"></i>exposto</span>
-    ${sp&&spots.some(x=>x.i===atual)?`<span>Local escolhido: vento ${seta((sp.dv+180)%360)} de ${lado(sp.dv)}, ${f(sp.vv)} km/h</span>${sp.dO!=null?`<span>ondas de ${lado(sp.dO)}, ${f(sp.hO,1)} m</span>`:''}`:''}</div>
-    <div class="leg"><span>A seta de cada local aponta para o mar. A cor usa a previsão do próprio local (vento e ondas do dia escolhido) e a orientação da costa. Clique num local para o selecionar.</span></div>`;
-  el.innerHTML=`<summary>Mapa dos locais de pesca${estado.lote?' (cor = abrigo no dia escolhido)':''}</summary><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Mapa da ilha com os locais de pesca">${g}</svg>${leg}`;
+  g+=`<text x="${W-28}" y="16" style="font-size:11px">N ↑</text><text x="8" y="16" style="font-size:12px;font-weight:600">${h==null?'Dia todo (média)':hm(h*60)}</text>`;
+  const sp=prs[spots.findIndex(x=>x.i===atual)];
+  const leg=`<div class="leg"><span><i style="background:var(--c1)"></i>abrigado</span><span><i style="background:var(--c3)"></i>parcialmente exposto</span><span><i style="background:var(--c5)"></i>exposto</span></div>
+    <div class="leg">${dvI!=null?`<span><i style="background:var(--g1)"></i>Vento (média da ilha): ${seta((dvI+180)%360)} de ${lado(dvI)}, ${f(vvI)} km/h</span>`:''}${dOI!=null?`<span><i style="background:var(--g3)"></i>Ondas ao largo: de ${lado(dOI)}, ${f(hOI,1)} m</span>`:''}${sp?`<span>Local escolhido: vento de ${lado(sp.dv)} ${f(sp.vv)} km/h${sp.dO!=null?`, ondas de ${lado(sp.dO)} ${f(sp.hO,1)} m`:''}</span>`:''}</div>
+    <div class="leg"><span>A seta de cada local aponta para o mar. As setas claras sobre a ilha mostram para onde sopra o vento; as roxas mostram as ondas a chegar. A cor usa a previsão do próprio local e a orientação da costa. Use a barra de horas para ver como evolui ao longo do dia.</span></div>`;
+  $('#mapaTitulo').textContent='Mapa dos locais de pesca'+(estado.lote?' (cor = abrigo no dia escolhido)':'');
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Mapa da ilha com os locais de pesca, vento e ondulação">${g}</svg>${leg}`;
   el.onclick=ev=>{const t=ev.target.closest('[data-i]');if(!t)return;$('#local').value=t.dataset.i;$('#local').onchange()};
 }
 
@@ -619,18 +711,23 @@ function render(){
   const forte=ordem[0],fraco=ordem[ordem.length-1];
   const bp=d.periodos.reduce((a,b)=>b.total>a.total?b:a);
   const pers=`<div class="pers" role="group" aria-label="Qualidade por período do dia">${d.periodos.map(p=>`<div class="per${p===bp?' top':''}" style="--c:${tier(p.total).c}"><b>${p.nome}</b><small>${p.a}h–${p.b}h</small><span>${p.total}%</span><div class="bar"><i style="width:${p.total}%"></i></div></div>`).join('')}</div>`;
+  const hr=estado.hora,horas=d.horas??(d.horas=HORAS.map(x=>pontuarHora(d,x))),th=hr==null?null:tier(horas[hr]);
+  const hbig=th?`<div class="hbig" style="--c:${th.c}"><span class="hh">${hm(hr*60)}</span>${horas[hr]}<small>%</small><span>${th.n}</span></div>`:'';
+  const figHora=grafico({titulo:'Pontuação hora a hora (%)',s:[{v:horas,h0:.5,c:G.a,area:1}],min:0,max:100,dec:0,un:'%',H:190,faixa:horas,
+    marcas:th?[{h:hr+.5,n:`${hm(hr*60)}: ${horas[hr]}%`,c:'var(--ink)'}]:[],
+    leg:[{c:'var(--c1)',n:'80% ou mais'},{c:'var(--c2)',n:'65–79%'},{c:'var(--c3)',n:'50–64%'},{c:'var(--c4)',n:'35–49%'},{c:'var(--c5)',n:'abaixo de 35%'}]});
   const mods=d.mods.map(({m,r})=>{
     if(!r)return`<div class="mod"><div class="mh"><h3>${m.nome}</h3></div><p class="nota">Sem dados disponíveis para este fator.</p></div>`;
     const c=tier(r.pontos).c;
-    return`<details class="mod" data-id="${m.id}" style="--c:${c}"${abertos.has(m.id)?' open':''}><summary><div class="mh"><h3>${m.nome} <small>peso ${Math.round(m.peso*100)}%</small></h3><strong>${Math.round(r.pontos)}%</strong></div>
+    return`<details class="mod" data-id="${m.id}" style="--c:${c}"${abertos.has(m.id)?' open':''}><summary><div class="mh"><h3>${m.nome} <small>peso ${Math.round(pesoDe(m)*100)}%</small></h3><strong>${Math.round(r.pontos)}%</strong></div>
       <div class="bar"><i style="width:${r.pontos}%"></i></div><p class="val">${r.valor}</p><p class="nota">${r.nota}</p>${m.det?'<span class="ver">Ver gráfico e pormenores</span>':''}</summary>${r.extra||''}${m.det?m.det(d):''}</details>`}).join('');
   $('#app').innerHTML=`<div class="dias" role="group" aria-label="Dias da semana">${lista}</div>
   <section class="painel" style="--c:${t.c}">
-    <div class="topo"><div><h2>${nomeDia(d.data,{weekday:'long',day:'numeric',month:'long'})}</h2><p>Relatório das 24 horas (00h–23h)</p></div>
-    <div class="big">${d.total}<small>%</small><span>${t.n}</span></div></div>
+    <div class="topo"><div><h2>${nomeDia(d.data,{weekday:'long',day:'numeric',month:'long'})}</h2><p>${TIPOS[tipoAtual].nome}. Relatório das 24 horas (00h–23h)</p></div>
+    ${hbig}<div class="big">${d.total}<small>%</small><span>${t.n}</span></div></div>
     ${d.avisos.map(a=>`<p class="aviso">${a}</p>`).join('')}
     <p class="resumo">${forte&&fraco&&forte!==fraco?`Ponto mais favorável: <b>${forte.m.nome.toLowerCase()}</b> (${Math.round(forte.r.pontos)}%). Ponto mais fraco: <b>${fraco.m.nome.toLowerCase()}</b> (${Math.round(fraco.r.pontos)}%).`:''}</p>
-    <p class="resumo">Melhor período do dia: <b>${bp.nome.toLowerCase()}</b> (${bp.total}%).</p>${pers}${mods}
+    <p class="resumo">Melhor período do dia: <b>${bp.nome.toLowerCase()}</b> (${bp.total}%).</p>${pers}${figHora}${mods}
   </section>`;
   document.querySelectorAll('details.mod').forEach(x=>x.ontoggle=()=>x.open?abertos.add(x.dataset.id):abertos.delete(x.dataset.id));
   document.querySelectorAll('.dia').forEach(b=>b.onclick=()=>{estado.sel=+b.dataset.i;render();$('.dia[aria-pressed=true]').focus()});
@@ -653,8 +750,8 @@ async function carregar(forcar){
     const idx=+$('#local').value||0,r=res[idx],loc=locs[idx];
     if(!r)throw new Error('Sem dados para este local');
     $('#desf').textContent=`Ajuste das marés neste local: ${loc[4]>0?'+':''}${loc[4]} min.`;
-    estado={dias:r.dias,sel:Math.min(estado.sel||0,r.dias.length-1),lote:res};render();
-    $('#estado').textContent=`Local: ${loc[0]}. Atualizado às ${L.hora.toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).${FREG[ilha]?' Locais: freguesias da Carta Administrativa Oficial (GEO API PT).':''}${loc[6]?` Marés: análise harmónica do Instituto Hidrográfico (porto de ${loc[6]}).`:''}`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
+    estado={dias:r.dias,sel:Math.min(estado.sel||0,r.dias.length-1),lote:res,hora:estado.hora};render();
+    $('#estado').textContent=`${TIPOS[tipoAtual].nome} em ${loc[0]}. Atualizado às ${L.hora.toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'})}. Dados: Open-Meteo (tempo e mar).${FREG[ilha]?' Locais: freguesias da Carta Administrativa Oficial (GEO API PT).':''}${loc[6]?` Marés: análise harmónica do Instituto Hidrográfico (porto de ${loc[6]}).`:''}`+(r.marinho?'':' Dados de mar indisponíveis: ondulação e temperatura da água ignoradas.');
   }catch(e){
     console.warn(e);
     $('#app').innerHTML='<div class="erro"><b>Não foi possível obter a previsão.</b><br>Verifique a ligação à internet e carregue em Atualizar. Abra este ficheiro diretamente no navegador (não dentro de uma pré-visualização).</div>';
@@ -673,8 +770,20 @@ function calibrar(){ // compara a hora oficial com a preia-mar do modelo mais pr
   carregar();
 }
 function preencherLocais(nome){const l=$('#local');l.innerHTML='';locaisDe(sel.value).forEach(([n],i)=>l.add(new Option(n,i)));const o=[...l.options].find(x=>x.text===nome);l.value=o?o.value:0}
+const selTipo=$('#tipo');Object.entries(TIPOS).forEach(([k,v])=>selTipo.add(new Option(v.nome,k)));
+try{const g=localStorage.getItem('tipo');if(TIPOS[g])tipoAtual=g}catch(e){}
+selTipo.value=tipoAtual;
+selTipo.onchange=()=>{tipoAtual=selTipo.value;try{localStorage.setItem('tipo',tipoAtual)}catch(e){}carregar()}; // recalcula com os dados já obtidos
 try{alvoLocal=localStorage.getItem('local')||''}catch(e){}
 preencherLocais(alvoLocal);
+const atualizar=()=>estado.dias?.length?render():desenharMapa(); // render() redesenha também o mapa
+let tempo=null;
+const mostrarHora=()=>{const h=estado.hora;$('#horaVal').textContent=h==null?'dia todo':hm(h*60);if(h!=null)$('#hora').value=h};
+const parar=()=>{clearInterval(tempo);tempo=null;$('#horaPlay').textContent='▶ Animar'};
+$('#hora').oninput=()=>{parar();estado.hora=+$('#hora').value;mostrarHora();atualizar()};
+$('#horaTodo').onclick=()=>{parar();estado.hora=null;mostrarHora();atualizar()};
+$('#horaPlay').onclick=()=>{if(tempo)return parar();$('#horaPlay').textContent='⏸ Parar';
+  tempo=setInterval(()=>{estado.hora=((estado.hora??-1)+1)%24;mostrarHora();atualizar()},700)};
 const escolher=()=>{alvoLocal=$('#local').selectedOptions[0]?.text||'';carregar()};
 sel.onchange=()=>{alvoLocal='';preencherLocais('');carregar()};$('#local').onchange=escolher;$('#rf').onclick=()=>carregar(true);$('#cal').onclick=calibrar;
 $('#rep').onclick=()=>{try{localStorage.removeItem(chave())}catch(x){}carregar()};
