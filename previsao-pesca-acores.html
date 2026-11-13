@@ -650,6 +650,7 @@ async function carregarFreguesias(ilha){
 const aneisX=g=>(g.type==='MultiPolygon'?g.coordinates:[g.coordinates]).flatMap(q=>q[0].map(p=>p[0]));
 
 /* ---------- Mapa da ilha: freguesias, orientação da costa e abrigo ao vento e às ondas ---------- */
+const nomeCurto=n=>n.length>22?n.slice(0,21)+'…':n; // nomes longos abreviados no mapa (o nome completo aparece ao passar o rato)
 const flecha=(x,y,az,len,c,o)=>`<g transform="translate(${x.toFixed(1)},${y.toFixed(1)}) rotate(${Math.round(az)})" opacity="${o}"><path d="M0,${len/2} L0,${-len/2} M0,${-len/2} L-4,${-len/2+7} M0,${-len/2} L4,${-len/2+7}" stroke="${c}" stroke-width="2.2" fill="none" stroke-linecap="round"/></g>`;
 function desenharMapa(){
   const el=$('#mapaConteudo'),R=Math.PI/180,ilha=sel.value;
@@ -676,12 +677,26 @@ function desenharMapa(){
   if(dvI!=null)for(let a=1;a<=4;a++)for(let b=1;b<=3;b++)g+=flecha(W*a/5,H*b/4,(dvI+180)%360,12+Math.min(vvI,40)/40*14,'var(--g1)',.4);
   if(dOI!=null){const th=dOI*R,d=.44*Math.min(W,H);
     for(let q=-2;q<=2;q++)g+=flecha(Math.min(W-14,Math.max(14,W/2+Math.sin(th)*d+Math.cos(th)*q*34)),Math.min(H-14,Math.max(14,H/2-Math.cos(th)*d+Math.sin(th)*q*34)),(dOI+180)%360,22,'var(--g3)',.85)}
+  // nomes sempre visíveis: cada nome tenta várias posições à volta do ponto e usa a primeira que não tapa outro nome, ponto ou seta
+  const pos=spots.map(x=>[+X(x.lon),+Y(x.lat)]),caixas=pos.flatMap(([a,b],n)=>{const r=spots[n].face*R;return[[a-8,b-8,a+8,b+8],[a+Math.sin(r)*19-5,b-Math.cos(r)*19-5,a+Math.sin(r)*19+5,b-Math.cos(r)*19+5]]});
+  const rotulo=spots.map(()=>null),cand=[[9,3,'start'],[-9,3,'end'],[0,-13,'middle'],[0,19,'middle'],[9,-9,'start'],[-9,-9,'end'],[9,15,'start'],[-9,15,'end'],[0,-26,'middle'],[0,32,'middle'],[22,3,'start'],[-22,3,'end'],[20,-18,'start'],[-20,-18,'end'],[20,24,'start'],[-20,24,'end']];
+  spots.map((x,n)=>n).sort((a,b)=>(spots[b].i===atual)-(spots[a].i===atual)).forEach(n=>{ // o local escolhido tem prioridade
+    const[a,b]=pos[n],w=nomeCurto(spots[n].n).length*4.9+4;let melhor=null;
+    for(const c of cand){ // primeira posição livre; se não houver, a que tapa menos
+      const x1=c[2]==='start'?a+c[0]:c[2]==='end'?a+c[0]-w:a+c[0]-w/2,y1=b+c[1]-9,x2=x1+w,y2=y1+11;
+      if(x1<2||x2>W-2||y1<2||y2>H-2)continue;
+      const k=caixas.filter(([p,q,r,t])=>x1<r&&x2>p&&y1<t&&y2>q).length;
+      if(!melhor||k<melhor.k)melhor={k,c,caixa:[x1,y1,x2,y2]};
+      if(!k)break;
+    }
+    if(melhor){caixas.push(melhor.caixa);rotulo[n]=melhor.c}
+  });
   spots.forEach((x,n)=>{
     const pr=prs[n],ex=pr?.ex??null,c=cor(ex),on=x.i===atual;
     g+=`<g class="pt" data-i="${x.i}" transform="translate(${X(x.lon)},${Y(x.lat)})"><title>${x.n}: costa virada a ${lado(x.face)}${pr?`; vento de ${lado(pr.dv)} ${f(pr.vv)} km/h${pr.dO!=null?`, ondas de ${lado(pr.dO)} ${f(pr.hO,1)} m`:''}; exposição ${Math.round(ex*100)}%`:''}</title>
       <g transform="rotate(${x.face})"><path d="M0,0 L0,-19 M0,-19 L-4,-12 M0,-19 L4,-12" stroke="${c}" stroke-width="2" fill="none"/></g>
       ${on?'<circle r="10" fill="none" stroke="var(--ink)" stroke-width="2"/>':''}<circle r="6" fill="${c}" stroke="var(--card)" stroke-width="1.5"/>
-      ${spots.length<=20||on?`<text x="9" y="3">${x.n}</text>`:''}</g>`;
+      ${rotulo[n]?`<text x="${rotulo[n][0]}" y="${rotulo[n][1]}" text-anchor="${rotulo[n][2]}">${nomeCurto(x.n)}</text>`:''}</g>`;
   });
   g+=`<text x="${W-28}" y="16" style="font-size:11px">N ↑</text><text x="8" y="16" style="font-size:12px;font-weight:600">${h==null?'Dia todo (média)':hm(h*60)}</text>`;
   const sp=prs[spots.findIndex(x=>x.i===atual)];
